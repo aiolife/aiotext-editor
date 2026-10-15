@@ -1,0 +1,39 @@
+# 工作区级 Cargo 配置
+#
+# ## 第十阶段：Windows 上「开箱即用、不依赖系统文件」
+#
+# 用 `dumpbin /dependents` 看过实际导入表：这个程序**唯一**的非系统依赖是
+# `MSVCP140.dll`——它来自 OpenCC 的 C++ 代码（CMake 默认 `/MD`，动态链接 VC++ 运行库）。
+# 其余导入项（`kernel32` / `user32` / `ole32` / `dwmapi` … 以及 `api-ms-win-crt-*`）
+# 都是 Windows 自带组件：UCRT 的那些 api-set 从 Windows 10 起就属于操作系统。
+#
+# 把两侧都改成**静态 CRT（/MT）**后，`MSVCP140.dll` 从导入表里消失，安装包不再需要
+# 目标机器预装 VC++ 运行库——这也顺带根掉了既存笔记里「旧版 msvcp140.dll 让 OpenCC
+# 词典加载时访问违例」的坑（见 `docs/03-tech-architecture.md` §10.1）：程序不再链接它。
+# 实测结果：导入表只剩 Windows 自带 DLL 与 `api-ms-win-crt-*`（UCRT；从 Windows 10 起
+# 就属于操作系统组件，不属于「要另装的可再发行组件」）。`tests/packaging.test.ts` 会
+# 解析发布产物的 PE 导入表来守住这条。
+#
+# （WebView2 是另一回事：由 NSIS 携带官方引导程序解决，见
+# `src-tauri/tauri.windows.conf.json`。）
+#
+# ## 两条设置缺一不可
+#
+# 1. `rustc` 侧 `+crt-static`：让 Rust 用 `libcmt` 而不是 `msvcrt`。
+#    少了它，最终链接（由 rustc 调 link.exe 完成）仍会引入动态 CRT，
+#    而 C++ 侧静态产物需要的 `libcmt` 符号就无处可寻 → LNK2019。
+# 2. `_CL_=/MT`：`cl.exe` 会把 `_CL_` 环境变量里的选项**追加到命令行最后**，
+#    于是覆盖 CMake 写入的默认 `/MD`。
+#    这是**不改动 opencc-sys（registry 依赖）**就能让它的 CMake 产物也走静态 CRT 的办法：
+#    `opencc-sys` 的 build.rs 直接调 `cmake::Config`，既没调 `.static_crt(true)`，
+#    `cmake` crate 自身也不会从 `CARGO_CFG_TARGET_FEATURE` 推断 `crt-static`
+#    （只有 `cc` crate 会推断），所以只能从编译器环境变量这一层兜住。
+#
+# 注：`_CL_` 只被 `cl.exe`（编译）读取，不影响 `link.exe`（链接读的是 `LINK` / `_LINK_`），
+# 所以不会干扰 rustc 的链接步骤。
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+_CL_ = "/MT"

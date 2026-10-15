@@ -1,0 +1,58 @@
+[package]
+name = "aiotext-editor"
+version = "0.1.0"
+description = "AioTextEditor —— 跨平台中文文本编辑器"
+edition = "2021"
+
+# 默认库入口由 tauri 约定（lib name = crate-name + "_lib" 在 lib.rs 中定义）
+[lib]
+name = "aiotext_editor_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+# 单实例（第九阶段）：第二次启动聚焦已有窗口，而不是再开一个进程
+tauri-plugin-single-instance = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 编码互转（WHATWG 全编码：UTF-8/UTF-16/GBK/GB2312/GB18030/Big5/ISO-8859-1 等）
+encoding_rs = "0.8"
+# 编码自动探测（Mozilla universal charset detector 的 Rust 移植，第二阶段）
+chardetng = "0.1"
+
+# 简繁转换引擎（内嵌 OpenCC 1.4.2 全部配置 JSON 与 .ocd2 词典）
+# 构建需 cmake ≥ 3.20 + MSVC + LLVM/libclang（bindgen）；运行需最新 VC++ 运行库
+opencc-sys = "0.5"
+
+# 自定义替换表：多模式匹配（F-04 独立替换）
+aho-corasick = "1"
+# 中文增强正则引擎（F-05；含 Unicode 类目与 HFA 引擎）
+regex = "1"
+
+# 错误与日志
+thiserror = "2"
+tracing = "0.1"
+# env-filter：用 `RUST_LOG` 放开 DEBUG 级日志（逐文件读 / 写日志默认关闭，
+# 见 src/lib.rs 的日志初始化注释）
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ---- 以下依赖按开发阶段引入（见 docs/05-roadmap.md §12.2）----
+# 第五阶段（工具集）：unicode-segmentation = "1"、memchr = "2"
+# 第六阶段（比较合并）：similar = "2"
+# 第七阶段（批处理）：rayon = "1"、walkdir = "2"、tokio = { version = "1", features = ["full"] }
+# 第八阶段（设置/其他）：notify = "7"
+
+# 第七阶段：批量处理
+rayon = "1"
+walkdir = "2"
+filetime = "0.2"
+
+[features]
+# 自定义协议由 tauri 自动管理
+custom-protocol = ["tauri/custom-protocol"]
