@@ -87,6 +87,13 @@ export const COMMANDS: readonly CommandMeta[] = [
   { id: 'file.closeAll', label: '全部关闭', group: '文件', defaultKey: mod('shift+w') },
   { id: 'file.closeOthers', label: '关闭其他标签', group: '文件', defaultKey: null },
 
+  // 编辑基础动作（PRD v0.6 §3.5：菜单要能点；键位不动 CodeMirror 自己的那一套）
+  // 撤销 / 重做**刻意不绑默认键**：Mod-Z / Mod-Shift-Z 由编辑器快捷键处理，
+  // 若这里也绑一份，App 分发器和 CodeMirror 会各撤销一次（等于一次撤销两步）。
+  { id: 'edit.undo', label: '撤销', group: '编辑', defaultKey: null },
+  { id: 'edit.redo', label: '重做', group: '编辑', defaultKey: null },
+  { id: 'edit.goto', label: '跳转…', group: '编辑', defaultKey: mod('g') },
+
   // 搜索
   { id: 'search.find', label: '查找…', group: '搜索', defaultKey: mod('f') },
   { id: 'search.replace', label: '替换…', group: '搜索', defaultKey: mod('h') },
@@ -113,6 +120,12 @@ export const COMMANDS: readonly CommandMeta[] = [
   { id: 'view.toggleStatusBar', label: '显示 / 隐藏状态栏', group: '视图', defaultKey: null },
   { id: 'view.toggleLineNumber', label: '显示 / 隐藏行号', group: '视图', defaultKey: null },
   { id: 'view.toggleWrap', label: '显示 / 隐藏自动换行', group: '视图', defaultKey: null },
+  { id: 'view.toggleSpaces', label: '显示 / 隐藏空格字符', group: '视图', defaultKey: null },
+  { id: 'view.toggleLineEnds', label: '显示 / 隐藏行尾字符', group: '视图', defaultKey: null },
+  { id: 'view.toggleParagraphMarks', label: '显示 / 隐藏换段符', group: '视图', defaultKey: null },
+  { id: 'doc.stats', label: '字数统计', group: '视图', defaultKey: null },
+  { id: 'doc.countSelected', label: '统计选定文字出现的次数', group: '视图', defaultKey: null },
+  { id: 'doc.paragraphCount', label: '显示段落数', group: '视图', defaultKey: null },
 
   // 设置
   { id: 'settings.open', label: '选项…', group: '设置', defaultKey: mod(',') },

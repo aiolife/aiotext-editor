@@ -116,6 +116,12 @@ pub struct Appearance {
     pub show_toolbar: bool,
     /// 显示状态栏
     pub show_status_bar: bool,
+    /// 显示不可见字符：空格（`·`）与制表符（`→`）
+    pub show_spaces: bool,
+    /// 显示行尾符（`¬`）
+    pub show_line_ends: bool,
+    /// 显示换段符（`¶`，只在段落的最后一行显示；开了它时该位置优先画 `¶` 而非行尾符）
+    pub show_paragraph_marks: bool,
     /// 主题
     pub theme: Theme,
 }
@@ -128,6 +134,10 @@ impl Default for Appearance {
             show_line_number: true,
             show_toolbar: true,
             show_status_bar: true,
+            // 不可见字符默认关闭：校对时才勾，常态阅读不需要
+            show_spaces: false,
+            show_line_ends: false,
+            show_paragraph_marks: false,
             theme: Theme::System,
         }
     }
@@ -429,6 +439,12 @@ mod tests {
         assert_eq!(s.appearance.theme, Theme::System);
         assert!(s.appearance.show_toolbar && s.appearance.show_status_bar);
         assert!(s.appearance.show_line_number);
+        // 不可见字符默认关闭（校对时才开）
+        assert!(
+            !s.appearance.show_spaces
+                && !s.appearance.show_line_ends
+                && !s.appearance.show_paragraph_marks
+        );
         assert_eq!(s.appearance.font_family, DEFAULT_FONT_FAMILY);
         assert_eq!(s.editor.tab_width, 4);
         assert!(s.editor.insert_spaces);

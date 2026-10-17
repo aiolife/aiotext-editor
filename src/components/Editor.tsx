@@ -9,8 +9,24 @@
  */
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { Compartment, EditorState, StateEffect, StateField, type Range } from '@codemirror/state';
-import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import {
+  Decoration,
+  EditorView,
+  ViewPlugin,
+  WidgetType,
+  keymap,
+  lineNumbers,
+  type DecorationSet,
+  type ViewUpdate,
+} from '@codemirror/view';
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab,
+  redo,
+  undo,
+} from '@codemirror/commands';
 import { indentUnit } from '@codemirror/language';
 import type { EditorTab } from '../store/tabsStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -41,6 +57,20 @@ export interface SelectionRequest {
   focus?: boolean;
 }
 
+/**
+ * 外部编辑器命令（菜单项没有键盘原生入口的那几个）。
+ *
+ * 撤销 / 重做本来是 CodeMirror 键盘快捷键（`historyKeymap`）能触发的，但撤销历史
+ * 挂在 view 的 state 里，**必须** `view.dispatch` 才能动——JS 侧拿不到 view，
+ * 所以走跟 `pendingEdit` 一样的路：父组件发意图 + nonce，这里执行一次。
+ */
+export interface EditorCommand {
+  kind: 'undo' | 'redo' | 'goto';
+  /** `goto` 用：目标行号（1 起，越界会被夹到有效范围） */
+  line?: number;
+  nonce: number;
+}
+
 interface EditorProps {
   tab: EditorTab;
   onContentChange: (id: string, content: string) => void;
@@ -53,6 +83,8 @@ interface EditorProps {
   pendingSelection?: SelectionRequest | null;
   /** 搜索命中高亮 */
   highlights?: SearchHighlight[];
+  /** 外部编辑器命令（撤销 / 重做 / 跳转）：按 nonce 触发一次 */
+  commandRequest?: EditorCommand | null;
   /** 只读（F-06 比较窗格：可看可选不可改） */
   readOnly?: boolean;
 }
@@ -98,6 +130,7 @@ const highlightField = StateField.define<DecorationSet>({
 const lineNumberCompartment = new Compartment();
 const wrapCompartment = new Compartment();
 const indentCompartment = new Compartment();
+const invisibleCompartment = new Compartment();
 
 function lineNumberExt(show: boolean) {
   return show ? lineNumbers() : [];
@@ -112,6 +145,113 @@ function indentExt(tabWidth: number, insertSpaces: boolean) {
   return [EditorState.tabSize.of(tabWidth), indentUnit.of(insertSpaces ? ' '.repeat(tabWidth) : '\t')];
 }
 
+// ---------------------------------------------------------------------------
+// 不可见字符（视图 → 显示空格字符 / 显示行尾字符 / 显示换段符）
+// ---------------------------------------------------------------------------
+
+/** 三个开关的组合 */
+interface InvisibleFlags {
+  spaces: boolean;
+  lineEnds: boolean;
+  paragraphs: boolean;
+}
+
+/** 符号 widget：一个小程序渲染一枚「不会进入文档」的字符 */
+class SymbolWidget extends WidgetType {
+  constructor(
+    readonly text: string,
+    readonly kind: string,
+  ) {
+    super();
+  }
+
+  eq(other: SymbolWidget): boolean {
+    return other.text === this.text && other.kind === this.kind;
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className = `cm-invisible cm-invisible-${this.kind}`;
+    span.textContent = this.text;
+    return span;
+  }
+
+  /** 不参与命中测试：光标走到这些符号时应当按照背后的真实字符处理 */
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+const SPACE_WIDGET = new SymbolWidget('·', 'space');
+const TAB_WIDGET = new SymbolWidget('→', 'tab');
+const LINE_END_WIDGET = new SymbolWidget('¬', 'line-end');
+const PARAGRAPH_WIDGET = new SymbolWidget('¶', 'paragraph');
+
+/**
+ * 按开关把不可见字符画出来。
+ *
+ * - 空格 / 制表符用 `Decoration.replace`：原字符被符号「顶替」，但**文档没变**，
+ *   编辑、选区、保存都不受影响（就像 Word / Sublime 的显示校对符号）。
+ * - 行尾符 `¬` 只画在**有换行**的行上（最后一行没有换行就不画）。
+ * - 换段符 `¶` 画在「段落的最后一行」——即下一行是空行或已到文末。
+ *   同一个位置两个符号会重叠，所以勾选了换段符时该位置**优先画** `¶`。
+ */
+function buildInvisible(view: EditorView, flags: InvisibleFlags): DecorationSet {
+  const ranges: Range<Decoration>[] = [];
+  const doc = view.state.doc;
+  for (const { from, to } of view.visibleRanges) {
+    let pos = from;
+    while (pos <= to) {
+      const line = doc.lineAt(pos);
+      const text = line.text;
+      if (flags.spaces) {
+        for (let index = 0; index < text.length; index += 1) {
+          const ch = text[index];
+          if (ch !== ' ' && ch !== '\t') continue;
+          const widget = ch === ' ' ? SPACE_WIDGET : TAB_WIDGET;
+          ranges.push(Decoration.replace({ widget }).range(line.from + index, line.from + index + 1));
+        }
+      }
+      if (line.to < to || line.number < doc.lines) {
+        // 「下一行为空行」= 这一段到此结束（与段间空行工具的「每段一个非空行」同口径）
+        const nextIsBlank =
+          line.number === doc.lines || doc.line(line.number + 1).text.trim() === '';
+        const isLastDocLine = line.number === doc.lines;
+        if (flags.paragraphs && (nextIsBlank || isLastDocLine)) {
+          ranges.push(Decoration.widget({ widget: PARAGRAPH_WIDGET, side: 1 }).range(line.to));
+        } else if (flags.lineEnds) {
+          ranges.push(Decoration.widget({ widget: LINE_END_WIDGET, side: 1 }).range(line.to));
+        }
+      }
+      if (line.to >= to) break;
+      pos = line.to + 1;
+    }
+  }
+  return Decoration.set(ranges, true);
+}
+
+/** 开关全关时不挂插件（零开销），任一打开才启动 */
+function invisibleExt(flags: InvisibleFlags): ViewPlugin<{
+  decorations: DecorationSet;
+  update(update: ViewUpdate): void;
+}> | [] {
+  if (!flags.spaces && !flags.lineEnds && !flags.paragraphs) return [];
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) {
+        this.decorations = buildInvisible(view, flags);
+      }
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.viewportChanged) {
+          this.decorations = buildInvisible(update.view, flags);
+        }
+      }
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
+}
+
 export function Editor({
   tab,
   onContentChange,
@@ -120,6 +260,7 @@ export function Editor({
   pendingEdit,
   pendingSelection,
   highlights,
+  commandRequest,
   readOnly,
 }: EditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -130,12 +271,24 @@ export function Editor({
   const wrap = useSettingsStore((s) => s.settings.editor.wrap);
   const tabWidth = useSettingsStore((s) => s.settings.editor.tabWidth);
   const insertSpaces = useSettingsStore((s) => s.settings.editor.insertSpaces);
+  const showSpaces = useSettingsStore((s) => s.settings.appearance.showSpaces);
+  const showLineEnds = useSettingsStore((s) => s.settings.appearance.showLineEnds);
+  const showParagraphMarks = useSettingsStore((s) => s.settings.appearance.showParagraphMarks);
   /** 挂载时用的初值（挂载后由下面的 reconfigure effect 接管） */
-  const displayRef = useRef({ showLineNumber, wrap, tabWidth, insertSpaces });
+  const displayRef = useRef({
+    showLineNumber,
+    wrap,
+    tabWidth,
+    insertSpaces,
+    showSpaces,
+    showLineEnds,
+    showParagraphMarks,
+  });
   // 只读是窗格级属性（F-06 比较对照窗）：挂载时固定即可
   const readOnlyRef = useRef(readOnly ?? false);
   const appliedNonceRef = useRef<number>(-1);
   const appliedSelectionNonceRef = useRef<number>(-1);
+  const appliedCommandNonceRef = useRef<number>(-1);
   /** 程序性替换期间抑制 change 回调（见文件头注释） */
   const suppressRef = useRef(false);
 
@@ -167,9 +320,16 @@ export function Editor({
         lineNumberCompartment.reconfigure(lineNumberExt(showLineNumber)),
         wrapCompartment.reconfigure(wrapExt(wrap)),
         indentCompartment.reconfigure(indentExt(tabWidth, insertSpaces)),
+        invisibleCompartment.reconfigure(
+          invisibleExt({
+            spaces: showSpaces,
+            lineEnds: showLineEnds,
+            paragraphs: showParagraphMarks,
+          }),
+        ),
       ],
     });
-  }, [showLineNumber, wrap, tabWidth, insertSpaces]);
+  }, [showLineNumber, wrap, tabWidth, insertSpaces, showSpaces, showLineEnds, showParagraphMarks]);
 
   // 切换标签：整体替换 doc 并恢复记录的光标行
   useEffect(() => {
@@ -244,6 +404,34 @@ export function Editor({
     }
   }, [pendingSelection]);
 
+  // 外部编辑器命令（撤销 / 重做 / 跳转）：撤销历史在 view 里，只能在这里 dispatch
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !commandRequest) return;
+    if (appliedCommandNonceRef.current === commandRequest.nonce) return;
+    appliedCommandNonceRef.current = commandRequest.nonce;
+    if (commandRequest.kind === 'undo') {
+      undo(view);
+      view.focus();
+      return;
+    }
+    if (commandRequest.kind === 'redo') {
+      redo(view);
+      view.focus();
+      return;
+    }
+    const doc = view.state.doc;
+    const lineNumber = Math.max(1, Math.min(commandRequest.line ?? 1, doc.lines));
+    const line = doc.line(lineNumber);
+    // 选中整行：跳转后立刻能看到「到了哪一行」，比只挪光标醒目
+    view.dispatch({
+      selection: { anchor: line.from, head: line.to },
+      effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+      scrollIntoView: true,
+    });
+    view.focus();
+  }, [commandRequest]);
+
   return <div ref={hostRef} className="editor-host" />;
 
   function makeState(t: EditorTab): EditorState {
@@ -255,6 +443,13 @@ export function Editor({
         lineNumberCompartment.of(lineNumberExt(display.showLineNumber)),
         wrapCompartment.of(wrapExt(display.wrap)),
         indentCompartment.of(indentExt(display.tabWidth, display.insertSpaces)),
+        invisibleCompartment.of(
+          invisibleExt({
+            spaces: display.showSpaces,
+            lineEnds: display.showLineEnds,
+            paragraphs: display.showParagraphMarks,
+          }),
+        ),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         highlightField,

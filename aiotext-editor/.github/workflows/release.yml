@@ -1,0 +1,151 @@
+name: Release
+
+# 第十阶段：tag 触发三平台出包，每个平台一个安装文件。
+#
+# 为什么 macOS / Linux 的包必须由 CI 产出：macOS 的 .dmg 需要 macOS SDK 与 codesign，
+# Linux 的 AppImage 需要 webkit2gtk 与 linuxdeploy —— 在 Windows 上都无法交叉生成。
+# 所以本机只负责 Windows 包（可本地验证），另两个平台交给这里的三条 runner。
+#
+# 产物（每平台一个文件）：
+#   windows-x64      target/release/bundle/nsis/AioTextEditor_<版本>_x64-setup.exe
+#   macos-universal  target/universal-apple-darwin/release/bundle/dmg/AioTextEditor_<版本>_universal.dmg
+#   linux-x64        target/release/bundle/appimage/AioTextEditor_<版本>_amd64.AppImage
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 出包 ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+            args: ''
+            artifact: target/release/bundle/nsis/*.exe
+          - name: macos-universal
+            os: macos-latest
+            args: '--target universal-apple-darwin'
+            artifact: target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          - name: linux-x64
+            os: ubuntu-22.04
+            args: ''
+            artifact: target/release/bundle/appimage/*.AppImage
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # opencc-sys 构建链：cmake（编译 OpenCC C++ 全库）+ LLVM/libclang（bindgen 生成 FFI）
+      - name: 安装 LLVM（bindgen 需要 libclang）
+        uses: kylemayes/install-llvm-action@v2
+        with:
+          version: "18"
+
+      - name: 配置 LIBCLANG_PATH
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "LIBCLANG_PATH=$LLVM_PATH/bin" >> "$GITHUB_ENV"
+          else
+            echo "LIBCLANG_PATH=$LLVM_PATH/lib" >> "$GITHUB_ENV"
+          fi
+
+      - name: 安装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+
+      # macOS 通用包要同时装两个架构的 std
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 校验 tag 与版本号一致
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          # 版本号唯一出处是 src-tauri/Cargo.toml（见 tests/packaging.test.ts），
+          # 打错 tag 会让「帮助 → 关于」与发布页对不上，所以在这里拦一下。
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json=$VERSION  tag=$TAG"
+          test "$VERSION" = "$TAG" || { echo "::error::tag 与版本号不一致"; exit 1; }
+
+      - name: 出包
+        run: npm run tauri:build -- ${{ matrix.args }}
+
+      # 冒烟：把刚打出来的包真的启动一次，确认界面渲染且无运行时错误。
+      # WebView2 在 windows-latest 上已预装；这里验证的是**产物**而不是源码。
+      - name: 冒烟测试（Windows）
+        if: runner.os == 'Windows'
+        run: npm run smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: 发布
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -lh dist-artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist-artifacts/*
+          draft: true
+          generate_release_notes: true
+
+# ---------------------------------------------------------------------------
+# 关于签名与公证（macOS）
+#
+# 当前 `src-tauri/tauri.macos.conf.json` 用 `signingIdentity: "-"`（ad-hoc 签名）：
+# 包能在任何 Mac 上直接打开，但**从浏览器下载**后首次打开会遇到 Gatekeeper 拦截，
+# 需要用户右键「打开」放行一次。要彻底免掉这一步，需要 Apple Developer 账号
+# （每年 $99）：把证书导出为 base64 后加进仓库 Secrets，并把下面这段加到
+# macos 的打包步骤上（Tauri 读到环境变量就会自动签名 + 公证）：
+#
+#   env:
+#     APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+#     APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+#     APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+#     APPLE_ID: ${{ secrets.APPLE_ID }}
+#     APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+#     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+#
+# 同时把配置里的 `signingIdentity` 换成 `${{ secrets.APPLE_SIGNING_IDENTITY }}` 对应的值
+# （或直接删掉该行，让 Tauri 用环境变量）。
+# ---------------------------------------------------------------------------

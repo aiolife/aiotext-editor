@@ -407,6 +407,150 @@ try {
     });
     if (batch.exceptionDetails) throw new Error(`批处理求值异常：${batch.exceptionDetails.text}`);
     const batchUi = batch.result.value;
+    // v0.6：视图菜单 6 个新增项（3 个不可见字符开关 + 3 个统计）、编辑菜单
+    // 头部 3 项（撤销 / 重做 / 跳转）、批处理面板白底黑字
+    const v06 = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        const tick = (ms = 80) => new Promise((r) => setTimeout(r, ms));
+        const openPanel = async (label) => {
+          const t = [...document.querySelectorAll('header .menubar-trigger')].find(
+            (e) => e.textContent.trim() === label,
+          );
+          if (!t) return null;
+          t.click();
+          await tick();
+          return { t, panel: t.parentElement.querySelector('.menu-panel') };
+        };
+        const close = async (p) => {
+          if (p) p.t.click();
+          await tick();
+        };
+
+        const view = await openPanel('视图');
+        const items = (p) => (p ? [...p.panel.querySelectorAll('.menu-item')].map((e) => e.textContent.trim()) : []);
+        const viewItems = items(view);
+        const viewChecks = view ? view.panel.querySelectorAll('[role="menuitemcheckbox"]').length : 0;
+        await close(view);
+
+        const editPane = await openPanel('编辑');
+        const editHead = items(editPane).slice(0, 3);
+        await close(editPane);
+
+        // 批处理：需求要白底黑字（原来跟着系统画布色发灰）
+        let batchStyle = { ok: false };
+        const pane = await openPanel('编辑');
+        if (pane) {
+          const entry = [...pane.panel.querySelectorAll('.menu-item')].find((e) => e.textContent.includes('批处理'));
+          if (entry) {
+            entry.click();
+            await tick(400);
+            const dlg = document.querySelector('.batch-dialog-textpro');
+            if (dlg) {
+              const cs = getComputedStyle(dlg);
+              batchStyle = {
+                ok: true,
+                bg: cs.backgroundColor,
+                color: cs.color,
+                border: cs.borderTopWidth,
+              };
+              const exit = [...dlg.querySelectorAll('button')].find((e) => e.textContent.trim() === '退出');
+              if (exit) exit.click();
+              await tick(200);
+            }
+          }
+        }
+        return { viewItems, viewChecks, editHead, batchStyle };
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (v06.exceptionDetails) throw new Error(`v0.6 求值异常：${v06.exceptionDetails.text}`);
+    const novitates = v06.result.value;
+    const viewWanted = [
+      '显示空格字符',
+      '显示行尾字符',
+      '显示换段符',
+      '字数统计',
+      '统计选定文字出现的次数',
+      '显示段落数',
+    ];
+    check(
+      '视图菜单：3 个不可见字符开关 + 3 个统计项',
+      viewWanted.every((label) => novitates?.viewItems?.includes(label)) &&
+        novitates?.viewChecks === 7,
+      `${novitates?.viewChecks} 个勾选项 · 缺失：${viewWanted.filter((l) => !novitates?.viewItems?.includes(l)).join('/') || '无'}`,
+    );
+    // 不可见字符真的会画出来：往正文里插一个空格，勾「显示空格字符」后数 `.cm-invisible-space`
+    await cdp.send('Input.insertText', { text: 'a b\nc' });
+    const inv = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        const tick = (ms = 150) => new Promise((r) => setTimeout(r, ms));
+        const content = document.querySelector('.cm-content');
+        if (!content) return { ok: false, reason: '没有编辑器' };
+        content.focus();
+        await tick();
+        const openView = async () => {
+          const t = [...document.querySelectorAll('header .menubar-trigger')].find(
+            (e) => e.textContent.trim() === '视图',
+          );
+          if (!t) return null;
+          t.click();
+          await tick();
+          return { t, panel: t.parentElement.querySelector('.menu-panel') };
+        };
+        const before = document.querySelectorAll('.cm-invisible-space').length;
+        const view = await openView();
+        const item =
+          view &&
+          [...view.panel.querySelectorAll('.menu-item')].find((e) =>
+            e.textContent.includes('显示空格字符'),
+          );
+        if (item) item.click();
+        await tick(300);
+        const after = document.querySelectorAll('.cm-invisible-space').length;
+        // 关回去：勾选项是持久化的，别把用户的默认值改了
+        if (item) {
+          const again = await openView();
+          const off =
+            again &&
+            [...again.panel.querySelectorAll('.menu-item')].find((e) =>
+              e.textContent.includes('显示空格字符'),
+            );
+          if (off) off.click();
+          await tick(200);
+          if (again) again.t.click();
+        }
+        return { ok: true, before, after };
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (inv.exceptionDetails) throw new Error(`不可见字符求值异常：${inv.exceptionDetails.text}`);
+    const invis = inv.result.value;
+    check(
+      '视图 → 显示空格字符：正文里真的画出空格符号',
+      invis?.ok === true && invis.before === 0 && invis.after > 0,
+      invis?.ok ? `勾选前 ${invis.before} 个 → 勾选后 ${invis.after} 个` : invis?.reason,
+    );
+
+    check(
+      '编辑菜单头部：撤销 / 重做 / 跳转',
+      novitates?.editHead?.[0] === '撤销' &&
+        novitates?.editHead?.[1] === '重做' &&
+        // 「跳转…」带 Ctrl+G 提示，两个 span 在一个 textContent 里
+        (novitates?.editHead?.[2] ?? '').startsWith('跳转'),
+      (novitates?.editHead ?? []).join(' / '),
+    );
+    check(
+      '批处理面板：白底黑字 + 外包框',
+      novitates?.batchStyle?.ok === true &&
+        novitates.batchStyle.bg.replace(/\s/g, '') === 'rgb(255,255,255)' &&
+        novitates.batchStyle.color.replace(/\s/g, '') === 'rgb(0,0,0)',
+      novitates?.batchStyle?.ok
+        ? `${novitates.batchStyle.bg} / ${novitates.batchStyle.color} / border=${novitates.batchStyle.border}`
+        : '没取到样式',
+    );
+
     check(
       '批处理对话框：TextPro 布局渲染',
       batchUi?.ok === true &&

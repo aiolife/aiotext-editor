@@ -4,6 +4,76 @@
 
 ---
 
+## v0.6 — 2026-10-18
+
+### 主要变更：视图 / 编辑 补格 + 统计口径 + 批处理白底
+
+用户实测续提 3 条：视图菜单要在「自动换行」下加 **不可见字符三开关 + 三个统计**；编辑菜单要在「查找」前加 **撤销 / 重做 / 跳转**；批处理面板**不要灰底**，要白底黑字带外包框。
+
+#### 1. 视图 → 显示空格字符 ☑ / 显示行尾字符 ☑ / 显示换段符 ☑
+
+三个开关（持久化到 `appearance.showSpaces` / `showLineEnds` / `showParagraphMarks`，默认关闭）由 CodeMirror 的 **decoration** 画出：`·`（空格）、`→`（制表符）、`¬`（行尾）、`¶`（段落最后一行）。
+
+符号**不进文档**：是 `Decoration.replace`（空白位）+ `Decoration.widget`（行尾）画出来的一层装饰，编辑、选中、复制、保存、字数统计一律按真实字符走。同一个位置同时存在时**优先画 `¶`**（换段符），避免两个符号叠成一团。
+
+#### 2. 视图 → 字数统计 / 统计选定文字出现的次数 / 显示段落数
+
+口径（写在 `src/shared/textStats.ts`，有单测锁定）：
+
+| 指标 | 口径 |
+|------|------|
+| 字数 | 不计空格（含全角空格 `U+3000`）与控制符；**代理对算 1 个字符**（用 `Array.from` 而不是 `.length`，否则 `𩅯` 会数成 2） |
+| 段落数 | 非空行数——与整理工具「段间空一行」（每段 = 一个非空行）**同口径**，不能各说各话 |
+| 选定文字出现次数 | 全文范围内**不重叠**计数；没选中文字时给提示而不是返回怪值（空串返回 0） |
+
+结果用一个通用的 `StatDialog` 展示（多行数塞状态栏会挤成一团）。
+
+#### 3. 编辑 → 撤销 / 重做 /（分隔）跳转…
+
+- 撤销 / 重做：撤销历史在 CodeMirror 的 view 里，只有 `view.dispatch` 能动，所以 App 只**发意图**（`EditorCommand` + 自增 nonce），由 `Editor` 执行一次。**刻意不给默认键位**——`Mod+Z` 已由 `historyKeymap` 处理，再绑一份会一次撤销两步。
+- 跳转（`Ctrl+G`）：`GotoDialog` 输入行号 → 滚动到视口居中并**选中整行**（比只挪光标醒目）。
+
+#### 4. 批处理面板：白底黑字 + 外包框
+
+原来面板背景跟着系统画布色（`canvas`），深色 / 深灰主题下整块发灰、和后面的半透明遮罩糊在一起。现在把它**固定成白底黑字**（连带输入框、下拉、列表一起），并补上 `border` + `box-shadow` 作为外包框。
+
+### 改动的文档
+
+| 文档 | 变更 |
+|------|------|
+| `PRD.md` | §3.5 菜单表：编辑行加「撤销 / 重做 / 跳转…」，视图行加 3 个不可见字符开关 + 3 个统计项 |
+| `04-ui-ux.md` | §2.2 编辑表标注「转到某行」已落地；§2.3 视图补齐 6 项 + 不可见字符说明 + 统计口径表 |
+| `CHANGELOG.md` | 本条目 |
+
+### 代码实现
+
+| 文件 | 变更 |
+|------|------|
+| `src-tauri/src/core/settings.rs` | `Appearance` 新增 `show_spaces` / `show_line_ends` / `show_paragraph_marks`（默认 false），单测 `defaults_match_spec` 加断言 |
+| `src/platform/tauriApi.ts`、`src/store/settingsStore.ts` | `AppearanceSettings` 与前端默认值同步三个字段 |
+| `src/components/Editor.tsx` | 新增 `invisibleCompartment` + `SymbolWidget` / `buildInvisible` / `invisibleExt`（viewport 内逐个换空格、行尾画符号）；新增 `EditorCommand` 意图通道（撤销 / 重做 / 跳转）并按 nonce 执行一次 |
+| `src/shared/textStats.ts`（新增） | `countTextStats` / `countOccurrences`：码点计数、忽略空白与控制符、段落 = 非空行、不重叠计数 |
+| `src/shared/textStats.test.ts`（新增） | 10 个用例锁定上述口径（代理对、全角空格、空文档、CRLF、重叠计数等） |
+| `src/shared/shortcuts.ts` | 命令表新增 `edit.undo` / `edit.redo` / `edit.goto`（`Ctrl+G`）、`view.toggleSpaces` / `view.toggleLineEnds` / `view.toggleParagraphMarks`、`doc.stats` / `doc.countSelected` / `doc.paragraphCount` |
+| `src/components/StatDialog.tsx`（新增）、`GotoDialog.tsx`（新增） | 统计结果对话框（通用 rows）、跳转到行对话框（行号校验 + 回车确认） |
+| `src/components/MenuBar.tsx` | 视图菜单插 3 个勾选 + 3 个统计；编辑菜单头部插 撤销 / 重做 / 分隔 / 跳转…；新增 `invisible` props |
+| `src/App.tsx` | 新增 `sendEditorCommand`、`handleDocStats` / `handleCountSelected` / `handleParagraphCount`；handlers 注册 9 条新命令；`Editor` 传 `commandRequest`；渲染两个新对话框 |
+| `src/styles/global.css` | `.cm-invisible*`（符号配色）、`.doc-stats*`（统计表）、`.dialog-narrow`；`.batch-dialog-textpro` 改白底黑字 + 外包框（连内部控件一起） |
+| `scripts/smoke.mjs` | 新增 3 条断言：视图菜单 6 项在位且勾选项 7 个、编辑菜单头部 撤销 / 重做 / 跳转、批处理面板 `getComputedStyle` 背景为 `rgb(255,255,255)`、文字为 `rgb(0,0,0)` |
+
+### 决策
+
+1. **不可见字符用 decoration 而不是改文档**：改文档会让复制、保存、字数统计全被污染；装饰层零副作用。
+2. **撤销 / 重做不绑默认键**：`Mod+Z` 本来就是 `historyKeymap` 的，菜单也能点就够了，重绑会双触发。
+3. **统计口径与工具对齐**：段落数按「非空行」，与 `insert_blank_between` 一致——否则「工具插了 9 个空行、这边说只有 3 段」自相矛盾。
+4. **批处理白底写死而不是跟主题**：它是功能面板不是内容区，需求明确要白（校对/对照时和深色编辑器形成反差反而难读，故保持系统色的是编辑器）。
+
+### 验证
+
+`cargo test` **237 全过**；`npm run test` **152/152**（含新增 10 个统计用例）；`npm run build` 通过；`eslint src` **0 问题**；`npm run smoke` **22/22**——其中「显示空格字符」是新加的**真实渲染断言**（CDP 灌入 `a b\nc` → 勾选后 `.cm-invisible-space` 由 0 个变 1 个），批处理白底则用 `getComputedStyle` 断言背景 `rgb(255,255,255)`、文字 `rgb(0,0,0)`。
+
+---
+
 ## v0.5 — 2026-10-18
 
 ### 主要变更：修保存 + 补齐编码能力 + 两处菜单扩展 + 批处理重排

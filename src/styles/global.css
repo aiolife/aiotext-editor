@@ -527,6 +527,106 @@ body,
 .batch-dialog-textpro {
   width: 760px;
   max-width: 92vw;
+  /* 需求（v0.6 #3）：批处理界面要**白底黑字 + 外包框**。
+     之前它跟着 `canvas` 走系统画布色，深色 / 深灰主题下整个面板发灰、
+     和原来的灰色遮罩糊成一片；这里把它固定成白底黑字，不再随主题漂移。 */
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid rgba(0, 0, 0, 0.45);
+  border-radius: 8px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
+}
+
+/* 面板里的控件也一起固定成白底黑字（否则会漏出灰色输入框） */
+.batch-dialog-textpro input[type='text'],
+.batch-dialog-textpro input[type='number'],
+.batch-dialog-textpro select,
+.batch-dialog-textpro button {
+  color: #000000;
+  background: #ffffff;
+}
+
+.batch-dialog-textpro input[type='text'],
+.batch-dialog-textpro select {
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.batch-dialog-textpro .batch-file-table,
+.batch-dialog-textpro .batch-list {
+  color: #000000;
+  background: #ffffff;
+}
+
+.batch-dialog-textpro .batch-file-head,
+.batch-dialog-textpro .batch-list-group,
+.batch-dialog-textpro .batch-col-title,
+.batch-dialog-textpro .batch-hint {
+  color: #4a4a4a;
+}
+
+.batch-dialog-textpro button:disabled {
+  color: #8a8a8a;
+}
+
+.batch-dialog-textpro .batch-file-row-focus,
+.batch-dialog-textpro .batch-queue-row-focus,
+.batch-dialog-textpro .batch-list-item-focus {
+  background: rgba(25, 118, 210, 0.16);
+}
+
+/* ---------- 不可见字符（视图 → 显示空格 / 行尾 / 换段符） ---------- */
+
+/* 符号是 Editor 里用 decoration「画」出来的，不进文档、不参与选中复制 */
+.cm-invisible {
+  color: #9aa0a6;
+  user-select: none;
+}
+
+.cm-invisible-paragraph {
+  color: #7f8fa4;
+}
+
+/* ---------- 统计对话框（视图 → 字数统计 等三项） ---------- */
+
+.doc-stats {
+  margin: 0 0 12px;
+}
+
+.doc-stats-row {
+  display: flex;
+  gap: 16px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px dashed rgba(128, 128, 128, 0.28);
+}
+
+.doc-stats-row dt {
+  margin: 0;
+  font-size: 13px;
+}
+
+.doc-stats-row dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-stats-hint {
+  display: block;
+  font-size: 11px;
+  color: rgba(128, 128, 128, 1);
+}
+
+.doc-stats-note {
+  font-size: 12px;
+  color: rgba(128, 128, 128, 1);
+}
+
+.dialog-narrow {
+  min-width: 300px;
+  max-width: 380px;
 }
 
 .batch-files-head {

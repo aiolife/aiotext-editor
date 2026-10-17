@@ -924,6 +924,12 @@ export interface AppearanceSettings {
   showLineNumber: boolean;
   showToolbar: boolean;
   showStatusBar: boolean;
+  /** 显示不可见字符：空格 `·` / 制表符 `→` */
+  showSpaces: boolean;
+  /** 显示行尾符 `¬` */
+  showLineEnds: boolean;
+  /** 显示换段符 `¶`（段落最后一行；优先于行尾符） */
+  showParagraphMarks: boolean;
   theme: Theme;
 }
 

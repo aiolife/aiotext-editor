@@ -1,0 +1,19 @@
+# 行尾统一（跨平台 CI 的前提）
+#
+# 起因：本仓库曾有 12 个 .rs 文件是 CRLF、24 个是 LF —— Windows 上 `cargo fmt --check`
+# 能过（rustfmt 的 newline_style=Auto 按文件自身的行尾走），但同一份代码在 Linux/macOS
+# 上检出、diff、格式化检查都可能表现不同。仓库里不许再出现两种行尾。
+#
+# `text=auto` 让 Git 自己判断哪些是文本；`eol=lf` 让检出到任何平台都是 LF。
+* text=auto eol=lf
+
+# 二进制资源：绝不做行尾转换（转了文件就坏了）
+*.png      binary
+*.ico      binary
+*.icns     binary
+*.exe      binary
+*.msi      binary
+*.dmg      binary
+*.AppImage binary
+*.dat      binary
+*.ocd2     binary

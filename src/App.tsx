@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTabsStore, type EditorTab, type SaveDecision } from './store/tabsStore';
 import { useSettingsStore } from './store/settingsStore';
+import { countOccurrences, countTextStats } from './shared/textStats';
 import { toast } from './store/toastStore';
 import { ToastHost } from './components/ToastHost';
 import { HelpDialog } from './components/HelpDialog';
@@ -63,9 +64,17 @@ import {
   type ToolMeta,
   type UnmappableChar,
 } from './platform/tauriApi';
-import { Editor, type PendingEdit, type SearchHighlight, type SelectionRequest } from './components/Editor';
+import {
+  Editor,
+  type EditorCommand,
+  type PendingEdit,
+  type SearchHighlight,
+  type SelectionRequest,
+} from './components/Editor';
 import { TabBar } from './components/TabBar';
 import { StatusBar } from './components/StatusBar';
+import { GotoDialog } from './components/GotoDialog';
+import { StatDialog } from './components/StatDialog';
 import { ReloadDialog } from './components/ReloadDialog';
 import { UnmappableDialog } from './components/UnmappableDialog';
 import { ConfirmCloseDialog, type CloseDecision } from './components/ConfirmCloseDialog';
@@ -160,6 +169,14 @@ interface UnmappableCtx {
   resolve: (decision: SaveDecision | null) => void;
 }
 
+/** 统计对话框的内容（字数统计 / 选定文字出现次数 / 段落数共用同一组件） */
+interface StatCtx {
+  title: string;
+  subtitle?: string;
+  rows: { label: string; value: string | number; hint?: string }[];
+  note?: string;
+}
+
 /** 关闭确认对话框的等待上下文（PRD v0.3 §3.4） */
 interface CloseCtx {
   /** 待关闭且未保存的标签快照（弹窗期间不应再跟着编辑抖动） */
@@ -207,6 +224,12 @@ export default function App() {
   const [unmappableCtx, setUnmappableCtx] = useState<UnmappableCtx | null>(null);
   const [closeCtx, setCloseCtx] = useState<CloseCtx | null>(null);
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
+  /** 外部编辑器命令（撤销 / 重做 / 跳转）——nonce 递增，连点同一个动作也要各执行一次 */
+  const [editorCommand, setEditorCommand] = useState<EditorCommand | null>(null);
+  /** 「编辑 → 跳转…」对话框 */
+  const [gotoOpen, setGotoOpen] = useState(false);
+  /** 统计结果（字数统计 / 选定文字出现次数 / 段落数共用一个对话框） */
+  const [statCtx, setStatCtx] = useState<StatCtx | null>(null);
   const [selection, setSelection] = useState<{ tabId: string; from: number; to: number } | null>(
     null,
   );
@@ -697,6 +720,100 @@ export default function App() {
     [activeTab, reloadWithEncoding, runGuarded],
   );
 
+  /**
+   * 菜单里的撤销 / 重做 / 跳转。
+   *
+   * 撤销历史挂在 CodeMirror 的 view 里，只有 dispatch 才能动，所以这里是「发意图」：
+   * `Editor` 收到 `commandRequest` 后执行一次。**不用 `Date.now()` 做 nonce**——
+   * 同一个毫秒里连点两次撤销会撞号导致第二次丢失，故用自增序号。
+   */
+  const editorCommandNonceRef = useRef(0);
+  const sendEditorCommand = useCallback((kind: 'undo' | 'redo' | 'goto', line?: number) => {
+    editorCommandNonceRef.current += 1;
+    setEditorCommand({ kind, line, nonce: editorCommandNonceRef.current });
+  }, []);
+
+  /** 长字符串截断显示（统计对话框里的「选定文字」） */
+  const snippet = (text: string, max = 24) =>
+    text.length > max ? `“${text.slice(0, max)}…”` : `“${text}”`;
+
+  /** 视图 → 字数统计 */
+  const handleDocStats = useCallback(() => {
+    if (!activeTab) return;
+    const text = activeTab.content;
+    const stats = countTextStats(text);
+    const selected =
+      selectionRange && selectionRange.to > selectionRange.from
+        ? text.slice(selectionRange.from, selectionRange.to)
+        : '';
+    setStatCtx({
+      title: '字数统计',
+      subtitle: selected
+        ? `全文统计；当前选区 ${snippet(selected)} 额外单列`
+        : '全文统计（未选中文字）',
+      rows: [
+        {
+          label: '字数（不计空格与控制符）',
+          value: stats.chars,
+          hint: '代理对算 1 个字符',
+        },
+        { label: '字符数（含空格）', value: stats.charsWithSpace },
+        { label: '字符数（含空格与控制符）', value: stats.charsAll },
+        { label: '行数', value: stats.lines },
+        { label: '段落数', value: stats.paragraphs, hint: '非空行数' },
+        { label: '字节数（UTF-8）', value: stats.bytes },
+        // 有选区时顺便给出选区字数，省得为了看一段话先剪切一遍
+        ...(selected
+          ? [
+              {
+                label: '选区字数（不计空格与控制符）',
+                value: countTextStats(selected).chars,
+              },
+            ]
+          : []),
+      ],
+      note: '「字数」不计空格、全角空格、制表符、换行等，也不计控制符。',
+    });
+  }, [activeTab, selectionRange]);
+
+  /** 视图 → 统计选定文字出现的次数 */
+  const handleCountSelected = useCallback(() => {
+    if (!activeTab) return;
+    const text = activeTab.content;
+    if (!selectionRange || selectionRange.to <= selectionRange.from) {
+      setNotice('请先在正文里选中一段文字，再统计它出现的次数');
+      return;
+    }
+    const needle = text.slice(selectionRange.from, selectionRange.to);
+    const stats = countTextStats(text);
+    setStatCtx({
+      title: '选定文字出现次数',
+      subtitle: `在全文范围内统计 ${snippet(needle)}`,
+      rows: [
+        { label: '出现次数', value: countOccurrences(text, needle), hint: '不重叠计数' },
+        { label: '选定文字长度', value: Array.from(needle).length },
+        { label: '全文字符数', value: stats.charsAll },
+      ],
+      note: '次数包含选区自身这一处；重叠出现不重复计数。',
+    });
+  }, [activeTab, selectionRange]);
+
+  /** 视图 → 显示段落数 */
+  const handleParagraphCount = useCallback(() => {
+    if (!activeTab) return;
+    const stats = countTextStats(activeTab.content);
+    setStatCtx({
+      title: '段落数',
+      subtitle: '段落 = 一个非空行（与「段间空一行」工具同口径）',
+      rows: [
+        { label: '段落数', value: stats.paragraphs, hint: '非空行数' },
+        { label: '行数', value: stats.lines },
+        { label: '空行数', value: Math.max(0, stats.lines - stats.paragraphs) },
+        { label: '全文字符数', value: stats.charsAll },
+      ],
+    });
+  }, [activeTab]);
+
   // ---------------------------------------------------------------------
   // F-03 简繁转换
   // ---------------------------------------------------------------------
@@ -1045,6 +1162,10 @@ export default function App() {
         run: () => void handleRunTool({ kind: 'full_to_half' }),
         enabled: () => !busy && activeTab !== null && tools.length > 0,
       },
+      // 编辑（撤销 / 重做 / 跳转：都转给编辑器实例执行，见 sendEditorCommand）
+      'edit.undo': { run: () => sendEditorCommand('undo'), enabled: () => activeTab !== null },
+      'edit.redo': { run: () => sendEditorCommand('redo'), enabled: () => activeTab !== null },
+      'edit.goto': { run: () => setGotoOpen(true), enabled: () => activeTab !== null },
       // 比较
       'compare.next': { run: goNextDiff, enabled: () => compareReport !== null },
       'compare.previous': {
@@ -1078,6 +1199,24 @@ export default function App() {
           updateSettings({ editor: { ...editor, wrap: !editor.wrap } });
         },
       },
+      // 不可见字符：校对用，画出来的符号不进文档、不影响保存
+      'view.toggleSpaces': {
+        run: () =>
+          updateSettings({ appearance: { ...appearance, showSpaces: !appearance.showSpaces } }),
+      },
+      'view.toggleLineEnds': {
+        run: () =>
+          updateSettings({ appearance: { ...appearance, showLineEnds: !appearance.showLineEnds } }),
+      },
+      'view.toggleParagraphMarks': {
+        run: () =>
+          updateSettings({
+            appearance: { ...appearance, showParagraphMarks: !appearance.showParagraphMarks },
+          }),
+      },
+      'doc.stats': { run: handleDocStats, enabled: () => activeTab !== null },
+      'doc.countSelected': { run: handleCountSelected, enabled: () => activeTab !== null },
+      'doc.paragraphCount': { run: handleParagraphCount, enabled: () => activeTab !== null },
       // 设置
       'settings.open': { run: () => setSettingsOpen('appearance') },
       'settings.shortcuts': { run: () => setSettingsOpen('shortcuts') },
@@ -1109,6 +1248,10 @@ export default function App() {
       updateSettings,
       driveSearch,
       searchOpen,
+      sendEditorCommand,
+      handleDocStats,
+      handleCountSelected,
+      handleParagraphCount,
       // 「全部保存 / 全部关闭 / 关闭其他」的可用性取决于标签总数与是否有脏标签
       tabs,
     ],
@@ -1186,6 +1329,11 @@ export default function App() {
             tables={replaceTables}
             hasActiveTab={activeTab !== null}
             hasFilePath={activeTab?.filePath != null}
+            invisible={{
+              spaces: appearance.showSpaces,
+              lineEnds: appearance.showLineEnds,
+              paragraphMarks: appearance.showParagraphMarks,
+            }}
             actions={{
               convert: handleConvertPick,
               convertDialog: () => handleOpenConvertDialog(),
@@ -1250,6 +1398,7 @@ export default function App() {
                 onSelectionChange={(id, from, to) => setSelection({ tabId: id, from, to })}
                 pendingEdit={pendingEdit}
                 pendingSelection={pendingSelection}
+                commandRequest={editorCommand}
                 highlights={highlights}
               />
             </div>
@@ -1273,6 +1422,7 @@ export default function App() {
             onSelectionChange={(id, from, to) => setSelection({ tabId: id, from, to })}
             pendingEdit={pendingEdit}
             pendingSelection={pendingSelection}
+            commandRequest={editorCommand}
             highlights={highlights}
           />
         ) : (
@@ -1413,6 +1563,22 @@ export default function App() {
 
       {/* 第九阶段：帮助与快捷键（顶栏「帮助」/ F1） */}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+
+      {/* v0.6：编辑 → 跳转…（输入行号 → 编辑器滚动到那一行） */}
+      {gotoOpen && activeTab && (
+        <GotoDialog
+          currentLine={activeTab.cursorLine}
+          totalLines={Math.max(1, activeTab.content.split(/\r\n|\r|\n/).length)}
+          onConfirm={(line) => {
+            setGotoOpen(false);
+            sendEditorCommand('goto', line);
+          }}
+          onCancel={() => setGotoOpen(false)}
+        />
+      )}
+
+      {/* v0.6：视图 → 字数统计 / 统计选定文字出现的次数 / 显示段落数 */}
+      {statCtx && <StatDialog {...statCtx} onClose={() => setStatCtx(null)} />}
 
       {convertDialog && (
         <ConvertDialog
