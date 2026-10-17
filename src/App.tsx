@@ -42,6 +42,9 @@ import {
   listOpenccDirections,
   convertOpencc,
   listReplaceTables,
+  loadReplaceTable,
+  applyReplace,
+  ENCODING_OPTIONS,
   applyPipelineStep,
   pipelinesCatalog,
   compareTexts,
@@ -197,6 +200,7 @@ export default function App() {
   const reloadWithEncoding = useTabsStore((s) => s.reloadWithEncoding);
   const saveTab = useTabsStore((s) => s.saveTab);
   const saveTabAs = useTabsStore((s) => s.saveTabAs);
+  const reencode = useTabsStore((s) => s.reencode);
 
   const [busy, setBusy] = useState(false);
   const [reloadTabId, setReloadTabId] = useState<string | null>(null);
@@ -631,6 +635,66 @@ export default function App() {
         await doSaveAs(id, tab?.fileName ?? '未命名');
       }),
     [doSaveAs, runGuarded],
+  );
+
+  /** 编辑 → 自定义替换 ▸ 某张表：与替换表对话框里的「应用到正文」走同一条路径 */
+  const handleApplyTable = useCallback(
+    (name: string) =>
+      runGuarded(`自定义替换：${name}`, async () => {
+        if (!activeTab) return;
+        const table = await loadReplaceTable(name);
+        const report = await applyReplace(activeTab.content, table, { mode: 'standalone' });
+        if (report.changedCount === 0) {
+          setNotice(`「${name}」在正文中没有命中`);
+          return;
+        }
+        setPendingEdit({
+          from: 0,
+          to: activeTab.content.length,
+          text: report.text,
+          nonce: Date.now(),
+        });
+        setNotice(`已按「${name}」替换 ${report.changedCount} 处`);
+      }),
+    [activeTab, runGuarded],
+  );
+
+  /** 文件 → 编码转换 ▸ 目标编码：内容不动，按目标编码重写文件 */
+  const handleConvertEncoding = useCallback(
+    (encodingLabel: string) =>
+      runGuarded('编码转换', async () => {
+        if (!activeTab) return;
+        if (!activeTab.filePath) {
+          setError('当前标签还没有保存到磁盘，无法转换编码');
+          return;
+        }
+        const actual = await reencode(activeTab.id, encodingLabel, (unmappable, tab) =>
+          askUser(unmappable, tab.encoding),
+        );
+        if (actual === null) return; // 用户在不可编码字符弹窗里取消
+        const label = ENCODING_OPTIONS.find((option) => option.value === actual)?.label ?? actual;
+        setNotice(`已按 ${label} 重新写出文件`);
+      }),
+    [activeTab, askUser, reencode, runGuarded],
+  );
+
+  /** 文件 → 重新载入 ▸ 指定编码（null = 打开原来的「选择编码」对话框） */
+  const handleReloadWith = useCallback(
+    (encodingLabel: string | null) =>
+      runGuarded('重新载入', async () => {
+        if (!activeTab) return;
+        if (!encodingLabel) {
+          setReloadTabId(activeTab.id);
+          return;
+        }
+        if (!activeTab.filePath) {
+          setError('当前标签还没有保存到磁盘，无法重新载入');
+          return;
+        }
+        await reloadWithEncoding(activeTab.id, encodingLabel);
+        setNotice(`已按 ${encodingLabel} 重新载入`);
+      }),
+    [activeTab, reloadWithEncoding, runGuarded],
   );
 
   // ---------------------------------------------------------------------
@@ -1119,6 +1183,9 @@ export default function App() {
             toolDisabled={busy || !activeTab || tools.length === 0}
             directions={directions}
             tools={tools}
+            tables={replaceTables}
+            hasActiveTab={activeTab !== null}
+            hasFilePath={activeTab?.filePath != null}
             actions={{
               convert: handleConvertPick,
               convertDialog: () => handleOpenConvertDialog(),
@@ -1128,6 +1195,9 @@ export default function App() {
               compare: () => setCompareDialogOpen(true),
               merge: () => setMergeDialogOpen(true),
               batch: () => setBatchDialogOpen(true),
+              convertEncoding: handleConvertEncoding,
+              reloadWith: handleReloadWith,
+              applyTable: handleApplyTable,
               resetSettings: () => {
                 void useSettingsStore.getState().reset();
                 setNotice('已恢复默认设置');

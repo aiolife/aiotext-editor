@@ -108,8 +108,10 @@ async fn reveal_in_folder(path: PathBuf) -> Result<(), String>;
 ### 2.2 行为描述
 
 - **自动检测**（顺序）：BOM → UTF-8 严格 → GB18030（含 GBK/GB2312） → BIG5 → UTF-16 LE/BE → fallback windows-1252（ISO-8859-1）。
-- **手选编码**：菜单"文件 → 重新载入"提供编码列表。
+- **手选编码**：`文件 → 重新载入 ▸` 提供编码列表（v0.5：7 项 + 原来的「自动探测…」对话框）——简体中文(936,GBK) / 简体中文(54936,GB18030) / 繁体中文(950,BIG5) / UTF-8 / UTF-16LE / UTF-16BE / NFO(437)。
+- **编码转换**（v0.5 新增）：`文件 → 编码转换 ▸` 把**当前文件**按目标编码重写（GBK / GB18030 / BIG5 / UTF-8），内容一个字符都不改，因此 GBK ⇄ BIG5 可任意互转；目标编码表示不了的字符走下面的预检流程。
 - **支持编码**（`encoding_rs`，WHATWG Encoding Standard 全集）：UTF-8、UTF-16 LE/BE、GBK、GB2312、GB18030、Big5、ISO-8859-1（windows-1252）、Shift_JIS、EUC-JP、EUC-KR、KOI8-R 等全部读写互转。
+  - **例外：CP437 / NFO(437)** 不在 WHATWG 表里（`encoding_rs` 不提供），由 `core/encoding.rs` 自带的 256 项表处理；只支持**显式指定**（重新载入 / 打开），不参与自动探测。
 - **保存为非 Unicode 编码（BIG5 / GBK 等）** 时：
   - 保存前**预检**不可编码字符，若有 → 弹窗列出前 N 处，供用户选择：**改存为 UTF-8（带 BOM）/ 以数字字符引用 `&#xNNNN;` 写出（WHATWG 标准行为）/ 取消**。
   - 批处理 / 流水线场景默认采用数字字符引用，不打断流程。
@@ -129,7 +131,11 @@ pub enum Encoding {
     Gb18030,  // 含 4 字节区，GB18030 ⊇ GBK ⊇ GB2312
     Big5,
     Latin1,   // WHATWG 中 ISO-8859-1 标签 = windows-1252
+    Cp437,    // v0.5：NFO / DOS 码页，encoding_rs 没有，自带 256 项表
 }
+// serde 名与 label() 严格一致（"utf-8" / "utf-16le" / "iso-8859-1" …），
+// 老名字（utf8 / utf16le / latin1）保留为 alias。v0.4 及以前靠 rename_all 生成
+// "utf8"，导致 fs_write 收到前端的 "utf-8" 在反序列化阶段就报 unknown variant。
 
 pub struct LoadResult {
     text: String,
@@ -923,7 +929,7 @@ pub struct BatchRequest {
 | 按行排序 | `sort_lines` | 默认按 Unicode 排序，扩展可拼音 / 笔画 |
 | 删除重复行 | `dedup_lines` | 仅保留首次出现 |
 | 删除空行 | `remove_empty_lines` | 含全 / 半角空格行 |
-| 段间空一行 | `insert_blank_between` | 反向 |
+| 段间空一行 | `insert_blank_between` | 反向；**段 = 一个非空行**（v0.5：补缺失空行 + 合并多余空行） |
 | 简单排版 | `simple_layout` | 删除空行 + 规范行首 + 删除行末空格 |
 | 自动分段 | `auto_segment` | 三选项 |
 | 控制行宽 | `control_width` | 半角字符数为单位 |
@@ -935,7 +941,11 @@ pub struct BatchRequest {
 
 各步骤均可作为批处理流水线的一部分复用。
 
-### 9.1 实现注记（2026-10-15，第五阶段）
+### 9.1 实现注记（2026-10-15，第五阶段；2026-10-18 v0.5 修订）
+
+> **v0.5 修订：`insert_blank_between` 的「段」定义改了。** 原先按「连续非空行 = 一段」切分（只在遇到真空行时切），于是 `甲\n乙` 被算成 1 段、一个空行都不插——用户实测报「段间空行功能无效」，就是这个原因。现在按「**每个非空行 = 一段**」处理：缺的空行补上，多余的连续空行合并成一个，行尾风格沿用原文（`split_lines` + `dominant_terminator`）。单测 `insert_blank_between_adds_and_collapses` 与 `stage5_contract` 的链路断言已同步。
+
+
 
 - **目录驱动**：18 个工具的分组、`has_options`（菜单显示「…」）、`inspects_only`（标「仅检查」）与各自的默认选项全部由后端 `pipelines::catalog()` 提供，前端不写死工具清单。
 - **带「…」的工具共 11 个**（多于本表显式写了"选项"的 6 个）：`remove_half_width`、`full_to_half`、`half_to_full`、`sort_lines`、`dedup_lines`、`normalize_line_head`、`remove_intra_line_breaks`、`auto_segment`、`control_width`、`fix_brackets`、`simple_layout`。其余 7 个（`trim_line_head`、`trim_line_end`、`remove_empty_lines`、`insert_blank_between`、`vertical_to_horizontal`、`half_quote_to_full`、`match_brackets`）**点一下即以默认选项应用**。

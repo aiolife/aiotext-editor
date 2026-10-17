@@ -10,20 +10,37 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppResult;
 
 /// 支持的编码（与 docs/02-functional-spec.md F-02 §2.3 数据契约一致）
+///
+/// **serde 名必须与 `label()` 一致**（`"utf-8"` / `"utf-16le"` / `"iso-8859-1"` …）：
+/// 前端 `ENCODING_OPTIONS` 用的就是 `label()` 这一套。原先这里靠
+/// `#[serde(rename_all = "lowercase")]` 生成的是 `"utf8"` / `"utf16le"` / `"latin1"`，
+/// 于是 `fs_write` 收到前端的 `"utf-8"` 在 serde 层就报
+/// `unknown variant 'utf-8'` —— 保存必失败。老名字保留为 `alias`，兼容旧会话与旧请求。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Encoding {
+    #[serde(rename = "utf-8", alias = "utf8")]
     Utf8,
+    #[serde(rename = "utf-16le", alias = "utf16le", alias = "utf-16")]
     Utf16LE,
+    #[serde(rename = "utf-16be", alias = "utf16be")]
     Utf16BE,
     /// WHATWG 将 GB2312 标签按 GBK 解析（超集兼容）
+    #[serde(rename = "gb2312")]
     Gb2312,
+    #[serde(rename = "gbk", alias = "cp936")]
     Gbk,
     /// 含 4 字节区，GB18030 ⊇ GBK ⊇ GB2312
+    #[serde(rename = "gb18030")]
     Gb18030,
+    #[serde(rename = "big5", alias = "cp950")]
     Big5,
     /// WHATWG 中 ISO-8859-1 标签 = windows-1252
+    #[serde(rename = "iso-8859-1", alias = "latin1")]
     Latin1,
+    /// DOS 码页 437（NFO / 建站老文件常用）。`encoding_rs` 是 WHATWG 子集、没有 437，
+    /// 故本项由本文件的 `cp437` 表自行解码 / 编码。只用于「重新载入 / 打开时指定编码」。
+    #[serde(rename = "cp437", alias = "437", alias = "ibm437", alias = "nfo")]
+    Cp437,
 }
 
 impl Encoding {
@@ -38,6 +55,7 @@ impl Encoding {
             Encoding::Gb18030 => "gb18030",
             Encoding::Big5 => "big5",
             Encoding::Latin1 => "iso-8859-1",
+            Encoding::Cp437 => "cp437",
         }
     }
 
@@ -52,6 +70,7 @@ impl Encoding {
             Encoding::Gb18030 => "GB18030",
             Encoding::Big5 => "Big5",
             Encoding::Latin1 => "ISO-8859-1 (windows-1252)",
+            Encoding::Cp437 => "NFO (437)",
         }
     }
 
@@ -68,13 +87,17 @@ impl Encoding {
             "gb18030" => Some(Encoding::Gb18030),
             "big5" | "cp950" => Some(Encoding::Big5),
             "iso88591" | "latin1" | "windows1252" | "cp1252" => Some(Encoding::Latin1),
+            "cp437" | "ibm437" | "437" | "nfo" => Some(Encoding::Cp437),
             _ => None,
         }
     }
 
     /// encoding_rs 解码器（GB2312 按 WHATWG 以 GBK 解析；Latin1 为 windows-1252）
-    fn decoder(self) -> &'static encoding_rs::Encoding {
-        match self {
+    ///
+    /// `None` 表示 `encoding_rs` 不管这种编码（目前只有 CP437），由本文件的
+    /// `cp437` 表接管解码 / 编码。
+    fn decoder(self) -> Option<&'static encoding_rs::Encoding> {
+        Some(match self {
             Encoding::Utf8 => encoding_rs::UTF_8,
             Encoding::Utf16LE => encoding_rs::UTF_16LE,
             Encoding::Utf16BE => encoding_rs::UTF_16BE,
@@ -82,7 +105,8 @@ impl Encoding {
             Encoding::Gb18030 => encoding_rs::GB18030,
             Encoding::Big5 => encoding_rs::BIG5,
             Encoding::Latin1 => encoding_rs::WINDOWS_1252,
-        }
+            Encoding::Cp437 => return None,
+        })
     }
 
     /// 该编码能否表示所有 Unicode 字符（UTF-8/UTF-16 恒真；Rust String 不含孤立代理）
@@ -261,8 +285,14 @@ pub fn detect(bytes: &[u8]) -> (Encoding, bool) {
 
 /// 解码（BOM 由调用方剥离后传入）
 pub fn decode(bytes: &[u8], encoding: Encoding) -> String {
-    let (cow, _used_encoding, _had_errors) = encoding.decoder().decode(bytes);
-    cow.into_owned()
+    match encoding.decoder() {
+        Some(decoder) => {
+            let (cow, _used_encoding, _had_errors) = decoder.decode(bytes);
+            cow.into_owned()
+        }
+        // 只有 CP437 没有 encoding_rs 解码器
+        None => cp437::decode(bytes),
+    }
 }
 
 /// 编码（WHATWG 行为：不可编码字符产出数字字符引用 `&#xNNNN;`；
@@ -286,8 +316,10 @@ pub fn encode(text: &str, encoding: Encoding) -> (Vec<u8>, bool) {
             }
             (bytes, false)
         }
+        Encoding::Cp437 => cp437::encode(text),
         _ => {
-            let (cow, _used_encoding, had_errors) = encoding.decoder().encode(text);
+            let decoder = encoding.decoder().expect("除 CP437 外都有 encoding_rs 解码器");
+            let (cow, _used_encoding, had_errors) = decoder.encode(text);
             (cow.into_owned(), had_errors)
         }
     }
@@ -337,6 +369,76 @@ fn strip_bom(bytes: &[u8], encoding: Encoding) -> (&[u8], bool) {
         Encoding::Utf16LE if bytes.starts_with(&[0xFF, 0xFE]) => (&bytes[2..], true),
         Encoding::Utf16BE if bytes.starts_with(&[0xFE, 0xFF]) => (&bytes[2..], true),
         _ => (bytes, false),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CP437（NFO / DOS 码页）
+// ---------------------------------------------------------------------------
+
+/// `encoding_rs` 只实现 WHATWG 编码表，里面没有 CP437，故自带一张 256 项表：
+/// `0x00..=0x7F` 与 ASCII 一一对应，`0x80..=0xFF` 查 [`HIGH`]。
+///
+/// 只用于「重新载入 / 打开时指定编码」——编码器把不可表示的字符写成 `?`
+/// （`had_errors = true`，保存前的不可映射预检照样能拦下来）。
+mod cp437 {
+    use std::collections::HashMap;
+    use std::sync::LazyLock;
+
+    /// CP437 高半区（`0x80..=0xFF`）的 Unicode 字符
+    const HIGH: [char; 128] = [
+        'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', 'É', 'æ',
+        'Æ', 'ô', 'ö', 'ò', 'û', 'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', 'á', 'í', 'ó', 'ú',
+        'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡', '«', '»', '░', '▒', '▓', '│', '┤', '╡',
+        '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐', '└', '┴', '┬', '├', '─', '┼', '╞', '╟',
+        '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧', '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘',
+        '┌', '█', '▄', '▌', '▐', '▀', 'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ',
+        '∞', 'φ', 'ε', '∩', '≡', '±', '≥', '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²',
+        '■', '\u{00A0}',
+    ];
+
+    /// 字符 → 字节（懒构建，避免每字符线性扫表）
+    fn reverse() -> &'static HashMap<char, u8> {
+        static MAP: LazyLock<HashMap<char, u8>> = LazyLock::new(|| {
+            HIGH.iter()
+                .enumerate()
+                .map(|(index, &ch)| (ch, index as u8 + 0x80))
+                .collect()
+        });
+        &MAP
+    }
+
+    pub(super) fn decode(bytes: &[u8]) -> String {
+        bytes
+            .iter()
+            .map(|&byte| {
+                if byte < 0x80 {
+                    byte as char
+                } else {
+                    HIGH[(byte - 0x80) as usize]
+                }
+            })
+            .collect()
+    }
+
+    pub(super) fn encode(text: &str) -> (Vec<u8>, bool) {
+        let mut out = Vec::with_capacity(text.len());
+        let mut had_errors = false;
+        for ch in text.chars() {
+            let code = ch as u32;
+            if code < 0x80 {
+                out.push(code as u8);
+                continue;
+            }
+            match reverse().get(&ch) {
+                Some(&byte) => out.push(byte),
+                None => {
+                    out.push(b'?');
+                    had_errors = true;
+                }
+            }
+        }
+        (out, had_errors)
     }
 }
 
@@ -577,6 +679,80 @@ mod tests {
     fn encoding_labels() {
         assert_eq!(Encoding::Gb2312.label(), "gb2312");
         assert_eq!(Encoding::Latin1.label(), "iso-8859-1");
+    }
+
+    #[test]
+    fn serde_uses_label_and_accepts_legacy_names() {
+        // 前端 ENCODING_OPTIONS 用的就是 label() 这一套；fs_write 的 opts 走 serde，
+        // 必须互通，否则保存会报 unknown variant 'utf-8'
+        for enc in [
+            Encoding::Utf8,
+            Encoding::Utf16LE,
+            Encoding::Utf16BE,
+            Encoding::Gb2312,
+            Encoding::Gbk,
+            Encoding::Gb18030,
+            Encoding::Big5,
+            Encoding::Latin1,
+            Encoding::Cp437,
+        ] {
+            let json = serde_json::to_string(&enc).unwrap();
+            assert_eq!(json, format!("\"{}\"", enc.label()));
+            let back: Encoding = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, enc);
+        }
+        // 旧名（rename_all 时代）仍可反序列化，旧会话文件不至于打不开
+        assert_eq!(
+            serde_json::from_str::<Encoding>("\"utf8\"").unwrap(),
+            Encoding::Utf8
+        );
+        assert_eq!(
+            serde_json::from_str::<Encoding>("\"latin1\"").unwrap(),
+            Encoding::Latin1
+        );
+        assert_eq!(
+            serde_json::from_str::<Encoding>("\"nfo\"").unwrap(),
+            Encoding::Cp437
+        );
+    }
+
+    #[test]
+    fn save_options_deserialize_frontend_json() {
+        // 前端 `fsWrite` 发的就是这个形状；截图里的报错正是这条路径：
+        // `invalid args 'opts' for command 'fs_write': unknown variant 'utf-8'`
+        let opts: SaveOptions = serde_json::from_value(serde_json::json!({
+            "encoding": "utf-8",
+            "addBom": false,
+            "lineEnding": "lf",
+            "unmappable": "ask"
+        }))
+        .expect("前端保存参数应可反序列化");
+        assert_eq!(opts.encoding, Encoding::Utf8);
+        assert_eq!(opts.line_ending, LineEnding::Lf);
+        assert_eq!(opts.unmappable, UnmappablePolicy::Ask);
+
+        // 非 UTF-8 的目标编码同样走这条路（编码转换）
+        let big5: SaveOptions = serde_json::from_value(serde_json::json!({
+            "encoding": "big5",
+            "addBom": false,
+            "lineEnding": "crlf",
+            "unmappable": "charref"
+        }))
+        .expect("BIG5 保存参数应可反序列化");
+        assert_eq!(big5.encoding, Encoding::Big5);
+        assert_eq!(big5.line_ending, LineEnding::CrLf);
+    }
+
+    #[test]
+    fn cp437_decode_and_encode() {
+        // 0xB0 0xB1 0xB2 = ░▒▓（NFO 里最常见的方块字符）
+        assert_eq!(decode(&[0xB0, 0xB1, 0xB2], Encoding::Cp437), "░▒▓");
+        assert_eq!(encode("░▒▓", Encoding::Cp437).0, vec![0xB0, 0xB1, 0xB2]);
+        // 中文字符 CP437 表示不了 → '?'，并报告 had_errors 让预检能拦
+        let (bytes, had_errors) = encode("中", Encoding::Cp437);
+        assert_eq!(bytes, vec![b'?']);
+        assert!(had_errors);
+        assert_eq!(check_mappable("中", Encoding::Cp437).len(), 1);
     }
 
     #[test]

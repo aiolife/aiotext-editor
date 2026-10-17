@@ -1,16 +1,33 @@
 /**
- * F-08 批处理对话框（第七阶段）
+ * F-08 批处理对话框（第七阶段；v0.5 按 TextPro 的布局重排）
  *
- * 沿用 TextPro 的双栏模式：
- * - 左：可用的整理工具（来自 `pipelines_catalog`），勾选即加入右栏
- * - 右：已选步骤队列，上下移 / 移除
+ * 布局照 `TextPro → 批处理操作`：
  *
- * 设置区：输入 / 输出编码（auto 默认）、递归、备份、保留 mtime；
- * 启动后切到运行态：进度条 + 错误面板 + 取消。
+ * ```text
+ *  需处理文件                      [x] 建立后备文件
+ *  ┌ 文件名 │ 路径 ─────────┐   [文件(F)…]
+ *  │ …                     │   [全选(A)]
+ *  │ …                     │   [全不选(A)]
+ *  └───────────────────────┘   [选择(S)] [不选(X)] [清空(C)]
+ *  可选择的处理        需进行的处理
+ *  ┌──────────┐  >>  ┌──────────┐
+ *  │ …        │  <<  │ ↑ ↓ ×    │
+ *  └──────────┘      └──────────┘
+ *  输入编码 [自动▾]   输出编码 [自动▾]
+ *                         [取消] [处理]
+ * ```
+ *
+ * 功能映射（我们的数据模型和 TextPro 不完全一样，逐个对上）：
+ * - 「需处理文件」= 输入路径（目录或单文件）；勾选状态决定这次真正处理哪些
+ *   （后端只认 `inputs` 列表，所以「不选」的项在启动前被过滤掉，不是假动作）。
+ * - 「可选择的处理」= `pipelines_catalog`（只列会改写正文的工具，`inspectsOnly` 的无操作）。
+ * - 「需进行的处理」= 步骤队列，`>>` 追加、`<<` 移除当前项，↑↓ 调顺序。
+ * - 「建立后备文件」= 后端 `backup`（写 `.bak`）。
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
   ENCODING_OR_AUTO_OPTIONS,
+  baseName,
   batchCancel,
   batchPlan,
   batchRun,
@@ -35,7 +52,11 @@ type Stage = 'config' | 'running' | 'done';
 export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
   const [catalog, setCatalog] = useState<ToolMeta[]>([]);
   const [inputs, setInputs] = useState<string[]>([]);
-  /** 待加入的路径（可直接键入 / 粘贴，也可用「浏览…」填充） */
+  /** 勾选要参与本次处理的路径（默认全选；「不选」的项在启动前被过滤） */
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  /** 「选择 / 不选」作用的当前高亮行 */
+  const [focusIndex, setFocusIndex] = useState<number | null>(null);
+  /** 待加入的路径（可直接键入 / 粘贴，也可用「文件(F)…」填充） */
   const [pendingPath, setPendingPath] = useState('');
   const [recursive, setRecursive] = useState(false);
   const [backup, setBackup] = useState(false);
@@ -43,6 +64,8 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
   const [inputEnc, setInputEnc] = useState<EncodingOrAuto>('auto');
   const [outputEnc, setOutputEnc] = useState<EncodingOrAuto>('auto');
   const [queue, setQueue] = useState<PipelineStep[]>([]);
+  const [libFocus, setLibFocus] = useState<string | null>(null);
+  const [queueFocus, setQueueFocus] = useState<number | null>(null);
   const [stage, setStage] = useState<Stage>('config');
   const [fileCount, setFileCount] = useState<number | null>(null);
   const [progress, setProgress] = useState({ done: 0, total: 0, modified: 0 });
@@ -63,21 +86,30 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
     void pipelinesCatalog().then((all) => setCatalog(all.filter((t) => !t.inspectsOnly)));
   }, []);
 
+  /** 真正会被处理的路径（勾选过的） */
+  const activeInputs = useMemo(
+    () => inputs.filter((path) => selectedPaths.includes(path)),
+    [inputs, selectedPaths],
+  );
+  /** 勾选集变化用字符串做依赖，避免数组 identity 每次都触发预览请求 */
+  const activeKey = activeInputs.join('\n');
+
   /**
    * 输入就绪后自动预览「将处理 N 个文件」（防抖 350ms）。
-   * 用户键入路径、切递归、增删输入都会触发；避免误把空目录 / 全无效路径送进批处理。
+   * 用户键入路径、切递归、勾选变化都会触发；避免误把空目录 / 全无效路径送进批处理。
    *
    * 所有 setState 都在防抖回调里（effect 体内同步 setState 会被
    * `react-hooks/set-state-in-effect` 判为错误）。
    */
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (inputs.length === 0) {
+      const list = activeKey === '' ? [] : activeKey.split('\n');
+      if (list.length === 0) {
         setFileCount(null);
         return;
       }
       void batchPlan({
-        inputs,
+        inputs: list,
         recursive,
         backup,
         preserveMtime,
@@ -89,9 +121,9 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
         .catch(() => setFileCount(null));
     }, 350);
     return () => clearTimeout(timer);
-  }, [inputs, recursive, backup, preserveMtime, inputEnc, outputEnc, queue]);
+  }, [activeKey, recursive, backup, preserveMtime, inputEnc, outputEnc, queue]);
 
-  /** 工具按组聚合显示 */
+  /** 工具按组聚合显示（「可选择的处理」按后端目录分组） */
   const grouped = useMemo(() => {
     const map = new Map<string, ToolMeta[]>();
     for (const t of catalog) {
@@ -102,29 +134,64 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
     return [...map.entries()];
   }, [catalog]);
 
-  /** 「浏览…」：把原生选择结果填进输入框（不直接入列，让用户确认） */
-  const browseInputDir = async () => {
-    const d = await pickDirectory();
-    if (d) setPendingPath(d);
-  };
-
-  /** 「添加」：把输入框内容作为一条输入路径（去重） */
   const addInputPath = (raw?: string) => {
     const value = (raw ?? pendingPath).trim();
     if (!value) return;
     setInputs((prev) => (prev.includes(value) ? prev : [...prev, value]));
+    setSelectedPaths((prev) => (prev.includes(value) ? prev : [...prev, value]));
     setPendingPath('');
     setFileCount(null);
   };
 
-  const removeInput = (i: number) => {
-    setInputs((prev) => prev.filter((_, idx) => idx !== i));
+  /** 「文件(F)…」：选一个目录加进列表（单文件可直接输入路径回车） */
+  const browseInputDir = async () => {
+    const dir = await pickDirectory();
+    if (dir) addInputPath(dir);
+  };
+
+  const removeInput = (index: number) => {
+    const path = inputs[index];
+    setInputs((prev) => prev.filter((_, idx) => idx !== index));
+    setSelectedPaths((prev) => prev.filter((p) => p !== path));
+    setFocusIndex(null);
     setFileCount(null);
   };
 
-  /** 输入路径变化时，之前算出的预览数已失效 */
-  const onPendingChange = (v: string) => {
-    setPendingPath(v);
+  const toggleInput = (path: string) => {
+    setSelectedPaths((prev) =>
+      prev.includes(path) ? prev.filter((p) => p !== path) : [...prev, path],
+    );
+    setFileCount(null);
+  };
+
+  const selectAll = () => {
+    setSelectedPaths(inputs);
+    setFileCount(null);
+  };
+
+  const selectNone = () => {
+    setSelectedPaths([]);
+    setFileCount(null);
+  };
+
+  /** 「选择 / 不选」：只作用于当前高亮行（与 TextPro 的行操作一致） */
+  const setFocusSelected = (value: boolean) => {
+    const path = focusIndex === null ? null : inputs[focusIndex];
+    if (!path) return;
+    setSelectedPaths((prev) =>
+      value
+        ? prev.includes(path)
+          ? prev
+          : [...prev, path]
+        : prev.filter((p) => p !== path),
+    );
+    setFileCount(null);
+  };
+
+  const clearAll = () => {
+    setInputs([]);
+    setSelectedPaths([]);
+    setFocusIndex(null);
     setFileCount(null);
   };
 
@@ -151,14 +218,18 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
     });
   };
 
-  const removeStep = (i: number) => {
-    setQueue((prev) => prev.filter((_, idx) => idx !== i));
+  /** 移除步骤：`index` 缺省时移除当前高亮项（`<<` 用） */
+  const removeStep = (index?: number) => {
+    const target = index ?? queueFocus;
+    if (target === null) return;
+    setQueue((prev) => prev.filter((_, idx) => idx !== target));
+    setQueueFocus(null);
   };
 
   /** 启动前做一次「计划预览」，避免把空目录 / 全是无效路径的请求送进批处理 */
   const previewPlan = async (): Promise<{ req: BatchRequest; count: number } | null> => {
-    if (inputs.length === 0) {
-      onNotice('请先添加要处理的目录');
+    if (activeInputs.length === 0) {
+      onNotice('请先选择要处理的文件（右侧「全选 / 选择」或添加路径）');
       return null;
     }
     if (queue.length === 0) {
@@ -166,7 +237,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
       return null;
     }
     const req: BatchRequest = {
-      inputs,
+      inputs: activeInputs,
       recursive,
       backup,
       preserveMtime,
@@ -260,11 +331,11 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
 
   return (
     <div className="dialog-overlay" role="dialog" aria-label="批处理">
-      <div className="dialog-body dialog-body-wide batch-dialog">
+      <div className="dialog-body batch-dialog batch-dialog-textpro">
         <header className="dialog-header">
-          <strong>批处理（F-08）</strong>
+          <strong>批处理操作</strong>
           {stage === 'config' ? (
-            <span className="batch-hint">配置步骤与运行参数 → 预览计划 → 启动</span>
+            <span className="batch-hint">加入文件 → 选处理步骤 → 处理</span>
           ) : (
             <span className="batch-hint">
               {progress.done}/{progress.total}（已改 {progress.modified}）
@@ -274,150 +345,271 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
 
         {stage === 'config' && (
           <>
-            <section className="batch-section">
-              <h4>输入</h4>
-              <div className="batch-path-row">
+            {/* ---------- 需处理文件 ---------- */}
+            <div className="batch-files-head">
+              <span>需处理文件</span>
+              <label className="batch-inline-check">
                 <input
-                  type="text"
-                  className="batch-path-input"
-                  placeholder="目录或文件路径（可键入 / 粘贴）"
-                  value={pendingPath}
-                  onChange={(e) => onPendingChange(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') addInputPath();
-                  }}
+                  type="checkbox"
+                  checked={backup}
+                  onChange={(e) => setBackup(e.target.checked)}
                 />
-                <button onClick={browseInputDir}>浏览…</button>
-                <button onClick={() => addInputPath()} disabled={pendingPath.trim().length === 0}>
-                  添加
+                建立后备文件
+              </label>
+            </div>
+
+            <div className="batch-files">
+              <div className="batch-file-table">
+                <div className="batch-file-head">
+                  <span />
+                  <span>文件名</span>
+                  <span>路径</span>
+                </div>
+                <div className="batch-file-body">
+                  {inputs.length === 0 ? (
+                    <p className="batch-empty">用右侧「文件(F)…」选目录，或直接把路径粘到下面回车</p>
+                  ) : (
+                    inputs.map((path, index) => (
+                      <div
+                        key={path}
+                        className={
+                          focusIndex === index ? 'batch-file-row batch-file-row-focus' : 'batch-file-row'
+                        }
+                        onClick={() => setFocusIndex(index)}
+                        onDoubleClick={() => removeInput(index)}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedPaths.includes(path)}
+                          onChange={() => toggleInput(path)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <span className="batch-file-name" title={path}>
+                          {baseName(path)}
+                        </span>
+                        <span className="batch-file-path" title={path}>
+                          {path}
+                        </span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="batch-file-actions">
+                <button type="button" onClick={() => void browseInputDir()}>
+                  文件(F)…
+                </button>
+                <button type="button" onClick={selectAll} disabled={inputs.length === 0}>
+                  全选(A)
+                </button>
+                <button type="button" onClick={selectNone} disabled={inputs.length === 0}>
+                  全不选(A)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFocusSelected(true)}
+                  disabled={focusIndex === null}
+                >
+                  选择(S)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFocusSelected(false)}
+                  disabled={focusIndex === null}
+                >
+                  不选(X)
+                </button>
+                <button type="button" onClick={clearAll} disabled={inputs.length === 0}>
+                  清空(C)
                 </button>
               </div>
-              <div className="batch-input-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={recursive}
-                    onChange={(e) => {
-                      setRecursive(e.target.checked);
-                      setFileCount(null);
-                    }}
-                  />{' '}
-                  递归子目录
-                </label>
-              </div>
-              {inputs.length > 0 && (
-                <ul className="batch-input-list">
-                  {inputs.map((p, i) => (
-                    <li key={i}>
-                      <span className="path">{p}</span>
-                      <button onClick={() => removeInput(i)}>移除</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {fileCount !== null && (
-                <p className="batch-plan-hint">
-                  预览：将处理 {fileCount} 个文件（深度={recursive ? '∞' : '1'}）
-                </p>
-              )}
-            </section>
+            </div>
 
-            <section className="batch-section">
-              <h4>步骤</h4>
-              <div className="batch-split">
-                <div className="batch-lib">
-                  <div className="batch-lib-title">工具库</div>
+            <div className="batch-path-row">
+              <input
+                type="text"
+                className="batch-path-input"
+                placeholder="目录或文件路径（键入 / 粘贴后回车）"
+                value={pendingPath}
+                onChange={(e) => {
+                  setPendingPath(e.target.value);
+                  setFileCount(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') addInputPath();
+                }}
+              />
+              <button type="button" onClick={() => addInputPath()} disabled={!pendingPath.trim()}>
+                添加
+              </button>
+              <label className="batch-inline-check">
+                <input
+                  type="checkbox"
+                  checked={recursive}
+                  onChange={(e) => {
+                    setRecursive(e.target.checked);
+                    setFileCount(null);
+                  }}
+                />
+                递归子目录
+              </label>
+              {fileCount !== null && (
+                <span className="batch-plan-hint">将处理 {fileCount} 个文件</span>
+              )}
+            </div>
+
+            {/* ---------- 可选择的处理 / 需进行的处理 ---------- */}
+            <div className="batch-tools">
+              <div className="batch-tool-col">
+                <div className="batch-col-title">可选择的处理</div>
+                <div className="batch-list">
                   {grouped.map(([group, tools]) => (
-                    <div key={group} className="batch-lib-group">
-                      <div className="batch-lib-group-title">{group}</div>
-                      {tools.map((t) => (
+                    <div key={group}>
+                      <div className="batch-list-group">{group}</div>
+                      {tools.map((tool) => (
                         <button
-                          key={t.id}
-                          className="batch-lib-item"
-                          onClick={() => addStep(t)}
-                          title={t.hint || t.label}
+                          key={tool.id}
+                          type="button"
+                          className={
+                            libFocus === tool.id
+                              ? 'batch-list-item batch-list-item-focus'
+                              : 'batch-list-item'
+                          }
+                          title={tool.hint || tool.label}
+                          onClick={() => setLibFocus(tool.id)}
+                          onDoubleClick={() => addStep(tool)}
                         >
-                          + {t.label}
-                          {t.hasOptions ? <span className="ellipsis">…</span> : null}
+                          {tool.label}
+                          {tool.hasOptions ? <span className="ellipsis">…</span> : null}
                         </button>
                       ))}
                     </div>
                   ))}
                 </div>
+              </div>
 
-                <div className="batch-queue">
-                  <div className="batch-queue-title">
-                    流水线（{queue.length} 步）
-                  </div>
+              <div className="batch-move">
+                <button
+                  type="button"
+                  disabled={libFocus === null}
+                  title="把选中的处理加到右侧"
+                  onClick={() => {
+                    const tool = catalog.find((t) => t.id === libFocus);
+                    if (tool) addStep(tool);
+                  }}
+                >
+                  &gt;&gt;
+                </button>
+                <button
+                  type="button"
+                  disabled={queueFocus === null}
+                  title="从右侧移除选中的处理"
+                  onClick={() => removeStep()}
+                >
+                  &lt;&lt;
+                </button>
+              </div>
+
+              <div className="batch-tool-col">
+                <div className="batch-col-title">需进行的处理</div>
+                <div className="batch-list batch-list-queue">
                   {queue.length === 0 ? (
-                    <p className="batch-empty">从左侧添加步骤</p>
+                    <p className="batch-empty">左侧双击或选中后点 &gt;&gt;</p>
                   ) : (
-                    <ol className="batch-queue-list">
-                      {queue.map((step, i) => {
-                        const meta = catalog.find((m) => m.id === (step as { kind: string }).kind);
-                        return (
-                          <li key={i} className="batch-queue-item">
-                            <span className="seq">{i + 1}.</span>
-                            <span className="name">{meta?.label ?? (step as { kind: string }).kind}</span>
-                            <button onClick={() => moveUp(i)} disabled={i === 0} title="上移">↑</button>
-                            <button onClick={() => moveDown(i)} disabled={i === queue.length - 1} title="下移">↓</button>
-                            <button onClick={() => removeStep(i)} title="移除">×</button>
-                          </li>
-                        );
-                      })}
-                    </ol>
+                    queue.map((step, index) => {
+                      const meta = catalog.find((m) => m.id === (step as { kind: string }).kind);
+                      return (
+                        <div
+                          key={index}
+                          className={
+                            queueFocus === index
+                              ? 'batch-queue-row batch-queue-row-focus'
+                              : 'batch-queue-row'
+                          }
+                          onClick={() => setQueueFocus(index)}
+                        >
+                          <span className="seq">{index + 1}.</span>
+                          <span className="batch-queue-name">
+                            {meta?.label ?? (step as { kind: string }).kind}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              moveUp(index);
+                            }}
+                            disabled={index === 0}
+                            title="上移"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              moveDown(index);
+                            }}
+                            disabled={index === queue.length - 1}
+                            title="下移"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeStep(index);
+                            }}
+                            title="移除"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>
-            </section>
+            </div>
 
-            <section className="batch-section">
-              <h4>运行设置</h4>
-              <div className="batch-settings">
-                <label>
-                  输入编码：
-                  <select
-                    value={inputEnc}
-                    onChange={(e) => setInputEnc(e.target.value as EncodingOrAuto)}
-                  >
-                    {ENCODING_OR_AUTO_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  输出编码：
-                  <select
-                    value={outputEnc}
-                    onChange={(e) => setOutputEnc(e.target.value as EncodingOrAuto)}
-                  >
-                    {ENCODING_OR_AUTO_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={backup}
-                    onChange={(e) => setBackup(e.target.checked)}
-                  />{' '}
-                  备份（.bak）
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={preserveMtime}
-                    onChange={(e) => setPreserveMtime(e.target.checked)}
-                  />{' '}
-                  保留 mtime
-                </label>
-              </div>
-            </section>
+            {/* ---------- 编码 ---------- */}
+            <div className="batch-io">
+              <label>
+                输入编码：
+                <select
+                  value={inputEnc}
+                  onChange={(e) => setInputEnc(e.target.value as EncodingOrAuto)}
+                >
+                  {ENCODING_OR_AUTO_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                输出编码：
+                <select
+                  value={outputEnc}
+                  onChange={(e) => setOutputEnc(e.target.value as EncodingOrAuto)}
+                >
+                  {ENCODING_OR_AUTO_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="batch-inline-check">
+                <input
+                  type="checkbox"
+                  checked={preserveMtime}
+                  onChange={(e) => setPreserveMtime(e.target.checked)}
+                />
+                保留修改时间
+              </label>
+            </div>
           </>
         )}
 
@@ -473,14 +665,14 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
           {stage === 'config' ? (
             <>
               <button className="dialog-cancel" onClick={onClose}>
-                关闭
+                退出
               </button>
               <button
                 className="dialog-primary"
                 onClick={handleStart}
-                disabled={inputs.length === 0 || queue.length === 0}
+                disabled={activeInputs.length === 0 || queue.length === 0}
               >
-                开始处理
+                处理
               </button>
             </>
           ) : stage === 'running' ? (

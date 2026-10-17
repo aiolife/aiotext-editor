@@ -17,7 +17,14 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { commandById, formatKey } from '../shared/shortcuts';
-import type { AppearanceSettings, OpenccDirectionMeta, PipelineStep, ToolMeta } from '../platform/tauriApi';
+import { ENCODING_CONVERT_TARGETS, REOPEN_ENCODINGS } from '../platform/tauriApi';
+import type {
+  AppearanceSettings,
+  OpenccDirectionMeta,
+  PipelineStep,
+  TableMeta,
+  ToolMeta,
+} from '../platform/tauriApi';
 
 /** 命令 id → 处理函数（与 `App` 的命令分发器同构） */
 export interface MenuHandlers {
@@ -33,6 +40,12 @@ export interface MenuBarProps {
   wrap: boolean;
   directions: OpenccDirectionMeta[];
   tools: ToolMeta[];
+  /** 用户替换表清单（「编辑 → 自定义替换 ▸」的二级菜单项） */
+  tables: TableMeta[];
+  /** 有活动标签（自定义替换只需要正文） */
+  hasActiveTab: boolean;
+  /** 活动标签已关联磁盘文件（重新载入 / 编码转换的前提） */
+  hasFilePath: boolean;
   convertDisabled: boolean;
   toolDisabled: boolean;
   compareDisabled: boolean;
@@ -45,6 +58,12 @@ export interface MenuBarProps {
     compare: () => void;
     merge: () => void;
     batch: () => void;
+    /** 文件 → 编码转换（按目标编码重写当前文件） */
+    convertEncoding: (encodingLabel: string) => void;
+    /** 文件 → 重新载入（按指定编码重读当前文件；null = 自动探测，弹原有的选择对话框） */
+    reloadWith: (encodingLabel: string | null) => void;
+    /** 编辑 → 自定义替换（用指定表替换当前正文） */
+    applyTable: (tableName: string) => void;
     /** 恢复默认设置（原「设置 ▾」里的同名片项） */
     resetSettings: () => void;
   };
@@ -68,12 +87,17 @@ export function MenuBar({
   wrap,
   directions,
   tools,
+  tables,
+  hasActiveTab,
+  hasFilePath,
   convertDisabled,
   toolDisabled,
   compareDisabled,
   actions,
 }: MenuBarProps) {
   const [open, setOpen] = useState<string | null>(null);
+  /** 当前展开的二级菜单（键为 submenuItem 的 key） */
+  const [subOpen, setSubOpen] = useState<string | null>(null);
   const rootRef = useRef<HTMLElement | null>(null);
 
   // 点菜单外部 / Esc 收起
@@ -94,9 +118,10 @@ export function MenuBar({
     };
   }, [open]);
 
-  /** 所有菜单项的统一出口：先收起，再执行 */
+  /** 所有菜单项的统一出口：先收起（含二级菜单），再执行 */
   const fire = (run: () => void) => {
     setOpen(null);
+    setSubOpen(null);
     run();
   };
 
@@ -148,6 +173,64 @@ export function MenuBar({
     );
   };
 
+  /**
+   * 带二级菜单的项（`文件 → 重新载入 ▸` / `编码转换 ▸`、`编辑 → 自定义替换 ▸`）。
+   *
+   * 鼠标划过展开、移出收起；整块（主项 + 子面板）共用一个 `menu-sub` 容器，
+   * 所以从主项横移到子面板时不会误收起。
+   */
+  const submenuItem = (
+    key: string,
+    label: string,
+    items: { key: string; label: string; run: () => void; disabled?: boolean; hint?: string }[],
+    disabled = false,
+  ) => (
+    <div
+      key={key}
+      className="menu-sub"
+      onMouseEnter={() => setSubOpen(key)}
+      onMouseLeave={() => setSubOpen((cur) => (cur === key ? null : cur))}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded={subOpen === key}
+        className="menu-item menu-item-row"
+        disabled={disabled}
+        onClick={() => setSubOpen(subOpen === key ? null : key)}
+      >
+        <span className="menu-item-label">{label}</span>
+        <span className="menu-item-more" aria-hidden="true">
+          ▸
+        </span>
+      </button>
+      {subOpen === key && !disabled ? (
+        <div className="menu-sub-panel" role="menu">
+          {items.length === 0 ? (
+            <button type="button" role="menuitem" className="menu-item" disabled>
+              （暂无）
+            </button>
+          ) : (
+            items.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                className="menu-item"
+                disabled={item.disabled}
+                title={item.hint}
+                onClick={() => fire(item.run)}
+              >
+                {item.label}
+              </button>
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+
   /** 无快捷键命令的普通项（比较 / 合并 / 批处理 / 转换方向 / 整理工具） */
   const plainItem = (
     key: string,
@@ -189,7 +272,32 @@ export function MenuBar({
       {commandItem('file.closeOthers')}
       {commandItem('file.closeAll')}
       <div className="menu-sep" />
-      {commandItem('file.reload')}
+      {/* 重新载入 ▸：第一项是原来的「自动探测…」（弹编码选择框），其后按指定编码硬重读 */}
+      {submenuItem('file.reload-with', '重新载入', [
+        {
+          key: 'reload-auto',
+          label: '自动探测…',
+          disabled: !enabledOf('file.reload'),
+          run: () => handlers['file.reload']?.run(),
+        },
+        ...REOPEN_ENCODINGS.map((enc) => ({
+          key: `reload-${enc.value}`,
+          label: enc.label,
+          disabled: !hasFilePath,
+          run: () => actions.reloadWith(enc.value),
+        })),
+      ])}
+      {/* 编码转换 ▸：内容不动，按目标编码重写文件（GBK ⇄ BIG5 等任意互转） */}
+      {submenuItem(
+        'file.encoding-convert',
+        '编码转换',
+        ENCODING_CONVERT_TARGETS.map((enc) => ({
+          key: `convert-enc-${enc.value}`,
+          label: enc.label,
+          disabled: !hasFilePath,
+          run: () => actions.convertEncoding(enc.value),
+        })),
+      )}
     </>
   );
 
@@ -199,6 +307,18 @@ export function MenuBar({
     <>
       {commandItem('search.find')}
       {commandItem('search.replace')}
+      {/* 自定义替换 ▸：直接列出「替换表管理」里的表名，点一下就对正文跑一张表 */}
+      {submenuItem(
+        'edit-custom-replace',
+        '自定义替换',
+        tables.map((table) => ({
+          key: `apply-table-${table.name}`,
+          label: table.name,
+          disabled: !hasActiveTab,
+          hint: table.builtin ? `内置示例表 · ${table.entryCount} 条` : `${table.entryCount} 条`,
+          run: () => actions.applyTable(table.name),
+        })),
+      )}
       {plainItem('convert-tables', '替换表管理…', !convertDisabled, actions.tables)}
       <div className="menu-sep" />
       {plainItem('compare', '比较…', !compareDisabled, actions.compare, {

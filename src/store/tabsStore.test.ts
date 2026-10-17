@@ -264,3 +264,36 @@ describe('重新载入', () => {
     expect(tab).toMatchObject({ content: '重载内容', encoding: 'big5', dirty: false });
   });
 });
+
+describe('编码转换（文件 → 编码转换）', () => {
+  it('reencode 以目标编码重写文件并更新标签编码', async () => {
+    setupInvoke();
+    const { tabId } = await useTabsStore.getState().openFile('C:/a/x.txt');
+    const actual = await useTabsStore
+      .getState()
+      .reencode(tabId, 'big5', () => Promise.resolve(null));
+
+    expect(invokeMock).toHaveBeenCalledWith(
+      'fs_write',
+      expect.objectContaining({
+        path: 'C:/a/x.txt',
+        opts: expect.objectContaining({ encoding: 'big5' }),
+      }),
+    );
+    expect(actual).toBe('big5');
+    expect(useTabsStore.getState().tabs[0]).toMatchObject({ encoding: 'big5', dirty: false });
+    // 内容不变：转换只换存储编码
+    expect(useTabsStore.getState().tabs[0].content).toBe('文件内容');
+  });
+
+  it('reencode 在不可映射时交给 UI 决策，取消则什么都不写', async () => {
+    setupInvoke({ unmappable: [{ position: 0, character: '发' }] });
+    const { tabId } = await useTabsStore.getState().openFile('C:/a/x.txt');
+    const askUser = vi.fn().mockResolvedValue(null);
+    const actual = await useTabsStore.getState().reencode(tabId, 'big5', askUser);
+
+    expect(askUser).toHaveBeenCalled();
+    expect(actual).toBeNull();
+    expect(invokeMock).not.toHaveBeenCalledWith('fs_write', expect.anything());
+  });
+});

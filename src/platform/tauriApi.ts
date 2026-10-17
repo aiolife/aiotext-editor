@@ -68,13 +68,26 @@ export async function pickOpenFile(): Promise<string | null> {
   return typeof picked === 'string' ? picked : null;
 }
 
-/** 系统另存为对话框，返回所选路径（用户取消返回 null） */
+/**
+ * 系统另存为对话框，返回所选路径（用户取消返回 null）
+ *
+ * 默认文件名补 `.txt`（新标签没有扩展名时），并给出文本文件过滤器；
+ * 保存的编码由标签的 `encoding` 决定，新文档固定 UTF-8（tabsStore 的默认值）。
+ */
 export async function pickSaveFile(defaultName?: string): Promise<string | null> {
   const { save } = await import('@tauri-apps/plugin-dialog');
-  return (await save({
-    title: '另存为',
-    defaultPath: defaultName,
-  })) ?? null;
+  const name = defaultName && defaultName.trim() !== '' ? defaultName : '未命名';
+  const withExt = /\.[A-Za-z0-9]{1,5}$/.test(name) ? name : `${name}.txt`;
+  return (
+    (await save({
+      title: '另存为',
+      defaultPath: withExt,
+      filters: [
+        { name: '文本文件 (*.txt)', extensions: ['txt'] },
+        { name: '全部文件', extensions: ['*'] },
+      ],
+    })) ?? null
+  );
 }
 
 /** 系统对话框：选择 TextPro `.tab` 表文件（F-04 §4.9 导入） */
@@ -111,6 +124,28 @@ export const ENCODING_OPTIONS: { value: string; label: string }[] = [
 export function isUnicodeEncoding(label: string): boolean {
   return label === 'utf-8' || label === 'utf-16le' || label === 'utf-16be';
 }
+
+/**
+ * 「文件 → 编码转换」的目标编码（菜单要求只有这 4 项）。
+ * 转换 = 内容不动、按目标编码重写文件，可从任意源编码转成其中任意一种。
+ */
+export const ENCODING_CONVERT_TARGETS: { value: string; label: string }[] = [
+  { value: 'gbk', label: '简体中文（936, GBK）' },
+  { value: 'gb18030', label: '简体中文（54936, GB18030）' },
+  { value: 'big5', label: '繁体中文（950, BIG5）' },
+  { value: 'utf-8', label: 'UTF-8' },
+];
+
+/** 「文件 → 重新载入」按指定编码重读当前文件（菜单要求的 7 项） */
+export const REOPEN_ENCODINGS: { value: string; label: string }[] = [
+  { value: 'gbk', label: '简体中文（936, GBK）' },
+  { value: 'gb18030', label: '简体中文（54936, GB18030）' },
+  { value: 'big5', label: '繁体中文（950, BIG5）' },
+  { value: 'utf-8', label: 'UTF-8' },
+  { value: 'utf-16le', label: 'UTF-16LE' },
+  { value: 'utf-16be', label: 'UTF-16BE' },
+  { value: 'cp437', label: 'NFO（437）' },
+];
 
 // ---------------------------------------------------------------------------
 // F-03 简繁互转

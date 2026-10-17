@@ -809,47 +809,56 @@ fn remove_empty_lines(text: &str) -> StepOutcome {
     )
 }
 
+/// 段间空一行：**每个非空行视为一段**，让相邻两段之间恰好隔一个空行。
+///
+/// 早先的实现把「段」定义成**连续非空行**（多行一段），只在遇到真空行时才切段，
+/// 于是 `甲\n乙` 被算成 1 个段落、一个空行都不插——用户反馈「段间空行功能无效、
+/// 两段之间没有插入空行」正是这个原因。现在改成：既把缺失的空行补上，
+/// 也把多余的连续空行合并成一个。
 fn insert_blank_between(text: &str) -> StepOutcome {
-    // 段落 = 连续非空行
-    let mut paragraphs: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    for (content, _) in split_lines(text) {
-        if is_blank(content) {
-            if !current.is_empty() {
-                paragraphs.push(std::mem::take(&mut current));
-            }
-        } else {
-            current.push(content.to_owned());
-        }
-    }
-    if !current.is_empty() {
-        paragraphs.push(current);
-    }
-    if paragraphs.is_empty() {
-        return note_outcome(text.to_owned(), 0, "没有段落".to_owned());
+    let lines = split_lines(text);
+    let trailing = lines.last().is_some_and(|(_, t)| !t.is_empty());
+    let body: Vec<&str> = lines
+        .iter()
+        .map(|(content, _)| *content)
+        .filter(|line| !is_blank(line))
+        .collect();
+
+    if body.len() < 2 {
+        return note_outcome(
+            text.to_owned(),
+            0,
+            if body.is_empty() {
+                "没有内容行".to_owned()
+            } else {
+                "只有一段，无需插入空行".to_owned()
+            },
+        );
     }
 
     let term = dominant_terminator(text);
-    let trailing = split_lines(text).last().is_some_and(|(_, t)| !t.is_empty());
-    let mut out = String::with_capacity(text.len() + paragraphs.len());
-    for (index, paragraph) in paragraphs.iter().enumerate() {
-        if index > 0 {
+    let mut out = String::with_capacity(text.len() + body.len() * term.len());
+    for (index, line) in body.iter().enumerate() {
+        out.push_str(line);
+        out.push_str(term);
+        if index + 1 < body.len() {
             out.push_str(term); // 段间空一行
-        }
-        for line in paragraph {
-            out.push_str(line);
-            out.push_str(term);
         }
     }
     if !trailing {
         out.truncate(out.len().saturating_sub(term.len()));
     }
-    let inserted = paragraphs.len() - 1;
-    note_outcome(
-        out,
-        inserted,
-        format!("{} 个段落，插入 {inserted} 个空行", paragraphs.len()),
-    )
+
+    // 实质变化看「行数差」：补上的空行算插入，被合并掉的算减少
+    let blank_before = lines.iter().filter(|(content, _)| is_blank(content)).count();
+    let blank_after = body.len() - 1;
+    let delta = blank_after as isize - blank_before as isize;
+    let note = if delta >= 0 {
+        format!("{} 段，插入 {} 个空行", body.len(), delta)
+    } else {
+        format!("{} 段，合并掉 {} 个多余空行", body.len(), -delta)
+    };
+    note_outcome(out, delta.unsigned_abs(), note)
 }
 
 fn dedup_lines(text: &str, opts: &DedupOptions) -> StepOutcome {
@@ -1747,13 +1756,18 @@ mod tests {
     }
 
     #[test]
-    fn insert_blank_between_collapses_extra_blanks() {
+    fn insert_blank_between_adds_and_collapses() {
+        // 每段 = 一个非空行：缺的空行补上、多的合并掉
         let out = by_id("insert_blank_between", "甲\n乙\n\n\n丙\n");
-        assert_eq!(out, "甲\n乙\n\n丙\n");
+        assert_eq!(out, "甲\n\n乙\n\n丙\n");
         // 幂等
         assert_eq!(by_id("insert_blank_between", &out), out);
-        // 无尾换行时保留无尾换行
-        assert_eq!(by_id("insert_blank_between", "甲\n乙"), "甲\n乙");
+        // 单换行分隔的两段之间**必须**插入空行（用户反馈的 bug）
+        assert_eq!(by_id("insert_blank_between", "甲\n乙"), "甲\n\n乙");
+        // 只是一段时原样返回
+        assert_eq!(by_id("insert_blank_between", "甲"), "甲");
+        // CRLF 沿用原文行尾
+        assert_eq!(by_id("insert_blank_between", "甲\r\n乙"), "甲\r\n\r\n乙");
     }
 
     #[test]

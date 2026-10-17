@@ -522,6 +522,195 @@ body,
   background: rgba(128, 128, 128, 0.25);
 }
 
+/* ---------- 批处理（TextPro 布局，F-08） ---------- */
+
+.batch-dialog-textpro {
+  width: 760px;
+  max-width: 92vw;
+}
+
+.batch-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+
+.batch-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.batch-files {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.batch-file-table {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  height: 148px;
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.06);
+}
+
+.batch-file-head,
+.batch-file-row {
+  display: grid;
+  grid-template-columns: 24px 150px 1fr;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 12.5px;
+}
+
+.batch-file-head {
+  color: rgba(128, 128, 128, 1);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.batch-file-body {
+  flex: 1;
+  overflow: auto;
+}
+
+.batch-file-row:hover {
+  background: rgba(128, 128, 128, 0.14);
+}
+
+.batch-file-row-focus {
+  background: rgba(25, 118, 210, 0.18);
+}
+
+.batch-file-name,
+.batch-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-file-actions {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  width: 104px;
+}
+
+.batch-file-actions button {
+  padding: 3px 8px;
+  font-size: 12.5px;
+}
+
+.batch-tools {
+  display: grid;
+  grid-template-columns: 1fr 62px 1fr;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 10px;
+}
+
+.batch-tool-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.batch-col-title {
+  margin-bottom: 4px;
+  font-size: 12.5px;
+  color: rgba(128, 128, 128, 1);
+}
+
+.batch-list {
+  height: 170px;
+  padding: 2px;
+  overflow: auto;
+  background: rgba(128, 128, 128, 0.06);
+  border: 1px solid rgba(128, 128, 128, 0.45);
+  border-radius: 4px;
+}
+
+.batch-list-group {
+  padding: 3px 6px 1px;
+  font-size: 11px;
+  color: rgba(128, 128, 128, 1);
+}
+
+.batch-list-item {
+  display: block;
+  width: 100%;
+  padding: 2px 6px;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  color: inherit;
+}
+
+.batch-list-item:hover {
+  background: rgba(128, 128, 128, 0.16);
+}
+
+.batch-list-item-focus {
+  background: rgba(25, 118, 210, 0.22);
+}
+
+.batch-move {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+
+.batch-move button {
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+.batch-queue-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 2px 4px;
+  font-size: 12.5px;
+}
+
+.batch-queue-row-focus {
+  background: rgba(25, 118, 210, 0.22);
+}
+
+.batch-queue-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-queue-row button {
+  padding: 0 5px;
+  font-size: 12px;
+}
+
+.batch-io {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+
 /* ---------- 查找 / 替换面板（F-05） ---------- */
 
 .search-panel {
@@ -790,6 +979,28 @@ body,
 .menu-item-label {
   flex: 1;
   text-align: left;
+}
+
+/* 二级菜单（文件 → 重新载入 ▸ / 编码转换 ▸，编辑 → 自定义替换 ▸）：
+   主项 + 子面板同属 .menu-sub，横移过去不会误收起 */
+.menu-sub {
+  position: relative;
+}
+
+.menu-sub-panel {
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  z-index: 70;
+  min-width: 200px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 4px 0;
+  background: canvas;
+  color: canvastext;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
 }
 
 .menu-item-more {

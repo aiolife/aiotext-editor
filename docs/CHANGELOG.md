@@ -4,6 +4,80 @@
 
 ---
 
+## v0.5 — 2026-10-18
+
+### 主要变更：修保存 + 补齐编码能力 + 两处菜单扩展 + 批处理重排
+
+**背景**：用户实测报了 6 条——段间空行无效 / 编辑加「自定义替换 ▸」/ 文件加「编码转换 ▸」/ 重新载入加按编码打开 / 保存总失败 / 批处理样式照 TextPro 重排。
+
+#### 1. 保存失败（截图里的 `unknown variant 'utf-8'`）
+
+`SaveOptions.encoding` 走 serde 派生，`Encoding` 靠 `#[serde(rename_all = "lowercase")]` 生成的变体名是 `"utf8"` / `"utf16le"` / `"latin1"`；而前端 `ENCODING_OPTIONS` 用的 `label()` 是 `"utf-8"` / `"utf-16le"` / `"iso-8859-1"`。于是 `fs_write` 在**反序列化参数阶段**就被 tauri 拒掉：`invalid args 'opts' for command 'fs_write': unknown variant 'utf-8'`——和磁盘、权限、路径都无关。
+
+改法：每个变体显式 `#[serde(rename = "…")]`，与 `label()` 严格一致；旧名保留 `alias`（`utf8` / `utf16le` / `latin1`），旧会话与旧请求仍能打开。加了两道锁：Rust 单测 `save_options_deserialize_frontend_json`（用前端真实 JSON 形状）+ 冒烟里真调一次 `fs_write` 断言 `bytesWritten > 0`。
+
+#### 2. 段间空行无效
+
+原实现把「段」定义成**连续非空行**，只在遇到真空行时才切段——`甲\n乙` 被算成 1 段，一个空行都不插。改成**每个非空行 = 一段**：缺的空行补上、多余的连续空行合并成一个，行尾风格（LF/CRLF）沿用原文。`insert_blank_between`、其单测与 `stage5_contract` 的链路断言同步更新。
+
+#### 3. 编辑 → 自定义替换 ▸
+
+直接列出「替换表管理」里的表名（带条数），点一下就对正文跑那张表（与替换表对话框的「应用到正文」同一条路径）；没有表时子面板显示「（暂无）」。
+
+#### 4. 文件 → 编码转换 ▸
+
+内容一个字符不改，按目标编码重写文件——所以 GBK ⇄ BIG5 任意互转（不是先转简体再转繁体那种绕路）。目标编码表示不了的字符走与保存同一套决策（询问 / 数字字符引用 / 改存 UTF-8）。新增 `tabsStore.reencode`，成功后把标签的 `encoding` 更新为**实际写出**的编码。
+
+#### 5. 重新载入 ▸ 按编码打开
+
+原「重新载入…」变成一个二级菜单：第一项「自动探测…」（原来的编码选择对话框），其后 GBK / GB18030 / BIG5 / UTF-8 / UTF-16LE / UTF-16BE / **NFO(437)** 七项按指定编码硬重读。
+
+CP437 不在 WHATWG 编码表里（`encoding_rs` 不提供），故新增 `Encoding::Cp437` + 自带 256 项映射表（`mod cp437`）：解码按表查、编码不可表示时写 `?` 并置 `had_errors`（保存前的不可映射预检照常能拦）。CP437 只认显式指定，不参与自动探测。
+
+#### 6. 批处理改成 TextPro 布局
+
+「需处理文件」表格（勾选 / 文件名 / 路径）+ 右侧六键（文件… / 全选 / 全不选 / 选择 / 不选 / 清空）、「建立后备文件」、「可选择的处理」与「需进行的处理」双栏 + `>>` `<<`、输入/输出编码下拉、底部 退出 / 处理。勾选状态**真的决定请求的 `inputs`**（启动前过滤），不是只有视觉效果；「需进行的处理」每行带 ↑ ↓ ×，用来调顺序 / 删除。
+
+#### 7. 保存默认 UTF-8、.txt
+
+新标签编码固定 `utf-8`；另存为对话框的默认文件名缺扩展名时补 `.txt`，并给出「文本文件 (*.txt)」过滤器。
+
+### 改动的文档
+
+| 文档 | 变更 |
+|------|------|
+| `PRD.md` | §3.5 菜单表：文件行补「重新载入 ▸」「编码转换 ▸」，编辑行补「自定义替换 ▸」 |
+| `04-ui-ux.md` | 新增 §2.4a「文件 / 编辑 里的二级菜单」（含 CP437 说明） |
+| `02-functional-spec.md` | F-07「段间空一行」语义改为「每个非空行 = 一段」；F-02 补 CP437 与编码转换 / 重新载入口径 |
+| `CHANGELOG.md` | 本条目 |
+
+### 代码实现
+
+| 文件 | 变更 |
+|------|------|
+| `src-tauri/src/core/encoding.rs` | `Encoding` 每个变体显式 `#[serde(rename)]` + 旧名 `alias`（修保存）；新增 `Cp437` 变体与 `mod cp437`（256 项表、懒构建反查表）；`decoder()` 改 `Option`，CP437 走自带解码/编码；新增 `save_options_deserialize_frontend_json`、`cp437_decode_and_encode` 等测试 |
+| `src-tauri/src/core/pipelines.rs` | `insert_blank_between` 重写为「每个非空行 = 一段」（补空行 + 合并多余空行），单测与 `stage5_contract` 同步 |
+| `src/store/tabsStore.ts` | 新增 `reencode(id, encodingLabel, askUser)`：按目标编码重写文件、更新标签编码；不可映射时走与保存相同的决策 |
+| `src/components/MenuBar.tsx` | 新增二级菜单组件 `submenuItem`（`▸`、hover 展开、主项 + 子面板同容器不误收起）；文件菜单加「重新载入 ▸」「编码转换 ▸」，编辑菜单加「自定义替换 ▸」；新增 `tables` / `hasActiveTab` / `hasFilePath` props |
+| `src/App.tsx` | 新增 `handleApplyTable` / `handleConvertEncoding` / `handleReloadWith`，并向菜单传替换表与三个 action |
+| `src/platform/tauriApi.ts` | `pickSaveFile` 补 `.txt` 与文本过滤器；新增 `ENCODING_CONVERT_TARGETS`（4 项）与 `REOPEN_ENCODINGS`（7 项） |
+| `src/components/BatchDialog.tsx` | 按 TextPro 布局重排（文件表 + 六键 / 双栏 + `>>` `<<` / 编码下拉 / 退出·处理）；勾选决定实际 `inputs`；步骤行带 ↑ ↓ × |
+| `src/styles/global.css` | 新增 `.menu-sub` / `.menu-sub-panel`（二级菜单浮层）与 `.batch-*` 一整套（文件表、双栏列表、队列行） |
+| `scripts/smoke.mjs` | 新增 4 条断言：编码转换 4 项 / 重新载入 8 项（含 437）/ 自定义替换列出表 / `fs_write` 真写成功 |
+
+### 决策
+
+1. **编码标识以后端 `label()` 为唯一真源**：serde 名与 `label()` 对齐，前端不再维护第二套拼写；旧名用 `alias` 兜住，不牺牲兼容。
+2. **CP437 自己实现而不是找替代编码**：`encoding_rs` 严格实现 WHATWG 表，里面没有 437；用 windows-1252 糊过去会把方块字符全译错，NFO 文件就没法看了。
+3. **「编码转换」= 重写同一个文件，不是另存为**：用户要的是"把这个文件改成 BIG5"，不是"再存一份"；预检与决策流程复用保存那一套，避免两条路径两套行为。
+4. **批处理的勾选必须真生效**：后端只认 `inputs`，所以「不选」的项在请求前就被过滤掉，UI 不做假动作。
+
+### 验证
+
+`cargo test` **237 项全过**；`npm run test` **142/142**；`npm run build` 通过；`eslint src` **0 问题**；`npm run smoke` **18/18**（含编码转换 / 重新载入 / 自定义替换 / 真写一次 UTF-8 / 批处理对话框渲染；热启动 551ms，冷启动首跑 1545ms 会被 1500ms 线卡一次，复跑即过）。
+
+---
+
 ## v0.4 — 2026-10-17
 
 ### 主要变更：顶栏改为纯文字菜单栏

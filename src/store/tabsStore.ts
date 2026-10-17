@@ -74,6 +74,19 @@ interface TabsState {
   saveTab: (id: string, askUser: (unmappable: { character: string; position: number }[], tab: EditorTab) => Promise<SaveDecision | null>) => Promise<boolean>;
   /** 另存为（UI 层先取好目标路径） */
   saveTabAs: (id: string, path: string, decision: SaveDecision | null) => Promise<boolean>;
+  /**
+   * 以指定编码重写文件（「文件 → 编码转换」）：字符内容不变，只换存储编码。
+   * 目标编码表示不了的字符走与保存相同的预检 / 决策流程；
+   * 返回**实际写出**的编码，用户取消返回 null。
+   */
+  reencode: (
+    id: string,
+    encodingLabel: string,
+    askUser: (
+      unmappable: { character: string; position: number }[],
+      tab: EditorTab,
+    ) => Promise<SaveDecision | null>,
+  ) => Promise<string | null>;
   /** 标签内容整体替换（重载等场景），并清除 dirty */
   replaceContent: (id: string, loaded: LoadResult) => void;
   /**
@@ -288,6 +301,41 @@ export const useTabsStore = create<TabsState>((set, get) => ({
       ),
     }));
     return true;
+  },
+
+  reencode: async (id, encodingLabel, askUser) => {
+    const tab = get().tabs.find((t) => t.id === id);
+    if (!tab) return null;
+    if (!tab.filePath) throw new Error('请先保存文件，再转换编码');
+
+    // 非 Unicode 目标编码：先查不可编码字符（与保存同一套决策）
+    let decision: SaveDecision | null = null;
+    if (!isUnicodeEncoding(encodingLabel)) {
+      const unmappable = await fsCheckMappable(tab.content, encodingLabel);
+      if (unmappable.length > 0) {
+        decision = await askUser(unmappable, tab);
+        if (!decision) return null;
+      }
+    }
+
+    const unmappable: SaveOptions['unmappable'] =
+      decision === 'charref' ? 'charref' : decision === 'toutf8' ? 'toutf8' : 'charref';
+    const target = decision === 'toutf8' ? 'utf-8' : encodingLabel;
+    const report = await fsWrite(tab.filePath, tab.content, {
+      ...saveOptionsFor(tab, unmappable),
+      encoding: target,
+      // 换编码时 BOM 只在 UTF-8 目标上沿用原文件习惯，其余编码不写 BOM
+      addBom: target === 'utf-8' && tab.hadBom,
+    });
+
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === id
+          ? { ...t, encoding: report.actualEncoding, hadBom: target === 'utf-8' && tab.hadBom, dirty: false }
+          : t,
+      ),
+    }));
+    return report.actualEncoding;
   },
 
   restoreSession: (tabs, activeTabId) => {

@@ -105,7 +105,8 @@ fn chain_runs_in_order_with_accumulated_notes() {
     ]))
     .expect("链应能解析");
     let outcome = pipelines::run_chain("甲 \n乙\n\n丙\n", &steps).expect("应能执行");
-    assert_eq!(outcome.text, "　甲\n　乙\n\n　丙\n");
+    // insert_blank_between 现在按「每段 = 一个非空行」补齐空行，故三行之间各有一个空行
+    assert_eq!(outcome.text, "　甲\n\n　乙\n\n　丙\n");
     assert_eq!(
         outcome.notes.len(),
         3,

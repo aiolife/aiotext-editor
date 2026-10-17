@@ -25,7 +25,8 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -264,6 +265,46 @@ try {
     if (func.exceptionDetails) throw new Error(`菜单求值异常：${func.exceptionDetails.text}`);
     const funcMenu = func.result.value;
 
+    // v0.5：文件 / 编辑 新增的二级菜单（编码转换 / 重新载入 / 自定义替换）
+    // + 保存回归（截图里的 `unknown variant 'utf-8'` 曾让保存必失败）
+    const tmpSave = path.join(os.tmpdir(), 'aiotext-smoke-save.txt').split(path.sep).join('/');
+    const extra = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        const tick = () => new Promise((r) => setTimeout(r, 80));
+        const trigger = (label) =>
+          [...document.querySelectorAll('header .menubar-trigger')].find((e) => e.textContent.trim() === label);
+        const openSub = async (menuLabel, subLabel) => {
+          const t = trigger(menuLabel);
+          if (!t) return { ok: false, reason: '顶栏没有「' + menuLabel + '」' };
+          t.click();
+          await tick();
+          const panel = t.parentElement.querySelector('.menu-panel');
+          if (!panel) return { ok: false, reason: menuLabel + ' 没展开' };
+          const sub = [...panel.querySelectorAll('.menu-sub')].find((s) => s.textContent.includes(subLabel));
+          if (!sub) return { ok: false, reason: '没有「' + subLabel + '」' };
+          sub.querySelector('button').click();
+          await tick();
+          const items = [...sub.querySelectorAll('.menu-sub-panel .menu-item')].map((e) => e.textContent.trim());
+          t.click();
+          await tick();
+          return { ok: true, items };
+        };
+        const convert = await openSub('文件', '编码转换');
+        const reload = await openSub('文件', '重新载入');
+        const custom = await openSub('编辑', '自定义替换');
+        const saved = await window.__TAURI_INTERNALS__.invoke('fs_write', {
+          path: '${tmpSave}',
+          text: '汉字保存冒烟',
+          opts: { encoding: 'utf-8', addBom: false, lineEnding: 'lf', unmappable: 'ask' },
+        });
+        return { convert, reload, custom, saved };
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (extra.exceptionDetails) throw new Error(`二级菜单 / 保存求值异常：${extra.exceptionDetails.text}`);
+    const extras = extra.result.value;
+
     const errors = cdp.events.filter(
       (e) =>
         e.method === 'Runtime.exceptionThrown' ||
@@ -303,6 +344,82 @@ try {
       funcMenu?.groups?.join(' / ') ?? '',
     );
     check('功能菜单：转换方向不再套二级菜单', funcMenu?.subs === 0, `${funcMenu?.subs} 个二级菜单`);
+    check(
+      '文件 → 编码转换 ▸ 有 4 个目标编码',
+      extras?.convert?.ok === true && extras.convert.items.length === 4,
+      extras?.convert?.ok ? extras.convert.items.join(' / ') : extras?.convert?.reason,
+    );
+    check(
+      '文件 → 重新载入 ▸ 8 项（含 NFO 437）',
+      extras?.reload?.ok === true &&
+        extras.reload.items.length === 8 &&
+        extras.reload.items.some((t) => t.includes('437')),
+      extras?.reload?.ok ? extras.reload.items.join(' / ') : extras?.reload?.reason,
+    );
+    check(
+      '编辑 → 自定义替换 ▸ 列出替换表',
+      extras?.custom?.ok === true && extras.custom.items.length > 0,
+      extras?.custom?.ok ? extras.custom.items.join(' / ') : extras?.custom?.reason,
+    );
+    check(
+      '保存（fs_write · encoding=utf-8）成功',
+      typeof extras?.saved?.bytesWritten === 'number' && extras.saved.bytesWritten > 0,
+      extras?.saved ? `${extras.saved.bytesWritten} 字节 · ${extras.saved.actualEncoding}` : '无返回',
+    );
+    try {
+      rmSync(tmpSave, { force: true });
+    } catch {
+      // 清理失败不影响结论
+    }
+
+    // 批处理对话框（TextPro 布局）真的能渲染：直接点菜单打开看一眼结构
+    const batch = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        const tick = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+        const trigger = [...document.querySelectorAll('header .menubar-trigger')].find((e) => e.textContent.trim() === '编辑');
+        if (!trigger) return { ok: false, reason: '顶栏没有「编辑」' };
+        trigger.click();
+        await tick();
+        const panel = trigger.parentElement.querySelector('.menu-panel');
+        const entry = panel && [...panel.querySelectorAll('.menu-item')].find((e) => e.textContent.includes('批处理'));
+        if (!entry) return { ok: false, reason: '编辑菜单里没有「批处理…」' };
+        entry.click();
+        await tick(400);
+        const dlg = document.querySelector('.batch-dialog-textpro');
+        if (!dlg) return { ok: false, reason: '批处理对话框没打开' };
+        const titles = [...dlg.querySelectorAll('.batch-col-title')].map((e) => e.textContent.trim());
+        const buttons = [...dlg.querySelectorAll('button')].map((e) => e.textContent.trim());
+        const selects = dlg.querySelectorAll('.batch-io select').length;
+        const exit = [...dlg.querySelectorAll('button')].find((e) => e.textContent.trim() === '退出');
+        if (exit) exit.click();
+        await tick(200);
+        return {
+          ok: true,
+          titles,
+          fileBtn: buttons.some((t) => t.includes('文件(F)')),
+          hasProcess: buttons.includes('处理'),
+          selects,
+          closed: !document.querySelector('.batch-dialog-textpro'),
+        };
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (batch.exceptionDetails) throw new Error(`批处理求值异常：${batch.exceptionDetails.text}`);
+    const batchUi = batch.result.value;
+    check(
+      '批处理对话框：TextPro 布局渲染',
+      batchUi?.ok === true &&
+        batchUi.titles.includes('可选择的处理') &&
+        batchUi.titles.includes('需进行的处理') &&
+        batchUi.fileBtn &&
+        batchUi.hasProcess &&
+        batchUi.selects === 2 &&
+        batchUi.closed,
+      batchUi?.ok
+        ? `${batchUi.titles.join(' / ')} · 文件键=${batchUi.fileBtn} · 处理键=${batchUi.hasProcess} · 编码下拉=${batchUi.selects} · 退出后关闭=${batchUi.closed}`
+        : batchUi?.reason,
+    );
     check('无页面运行时错误', errors.length === 0, errors.length ? errors.map((e) => e.method).join(',') : 'none');
 
     cdp.ws.close();
