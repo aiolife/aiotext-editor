@@ -222,25 +222,16 @@ src-tauri/data/legacy/          # 开放文本格式（详见 docs/06-data-dicti
 |--------|---------|---------|
 | `s2t.json` | 简体 → OpenCC 标准繁体 | 一般简转繁（推荐） |
 | `t2s.json` | OpenCC 繁体 → 简体 | 一般繁转简（推荐） |
-| `s2tw.json` | 简体 → 台湾正体 | 输出面向台湾地区 |
-| `tw2s.json` | 台湾正体 → 简体 | 处理台湾繁体资料 |
 | `s2twp.json` | 简体 → 台湾正体（带台湾惯用词彙） | "鼠标 → 滑鼠" 等词组也一并转换 |
 | `tw2sp.json` | 台湾繁体 → 简体（带大陆惯用词彙） | 处理台湾文档时按大陆习惯标准化 |
 | `s2hk.json` | 简体 → 香港繁体 | 面向香港地区 |
 | `hk2s.json` | 香港繁体 → 简体 | 处理香港繁体资料 |
-| `t2tw.json` | OpenCC 繁体 → 台湾正体 | 仅字形调整 |
-| `tw2t.json` | 台湾正体 → OpenCC 繁体 | 反向 |
-| `t2hk.json` | OpenCC 繁体 → 香港繁体 | |
-| `hk2t.json` | 香港繁体 → OpenCC 繁体 | |
-| `t2jp.json` | OpenCC 繁体 → 日文旧字体（Kyūjitai） | 古籍日文处理 |
-| `jp2t.json` | 日文新字体 → OpenCC 繁体 | |
-| `t2seal.json` | 繁体 → 小篆（U+3D000..U+3FCF3F） | 试验性，中国传统字体 |
-| `seal2t.json` | 小篆 → 繁体 | |
-| `s2seal.json` | 简体 → 小篆 | 等价于 s2t + t2seal |
 
-UI 默认提供 **6 个常用入口**（s2t、t2s、s2twp、tw2sp、s2hk、hk2s），其余放在"功能 → 转换 → 其他转换"二级菜单。
+这 6 种**就是全部**：「功能」菜单里直接点用，没有二级菜单，也不再有「常用 / 其他」之分。
 
-> **实现注记（第三阶段）**：当前引擎 `opencc-sys` 0.5.2 内嵌数据只包含 16 个配置 JSON（`hk2s`/`hk2sp`/`hk2t`/`jp2t`/`s2hk`/`s2hkp`/`s2t`/`s2tw`/`s2twp`/`t2hk`/`t2jp`/`t2s`/`t2tw`/`tw2s`/`tw2sp`/`tw2t`），**不含 `t2seal` / `seal2t` / `s2seal`**（小篆，试验性）及对应词典。因此 UI 提供 **14 种标准方向**（6 常用 + 8 其他）；小篆方向待上游数据补齐，或由用户在 `%APPDATA%/AioTextEditor/configs/` 提供自定义配置后经 `Custom` 方向使用。
+> **实现注记（v0.5：方向收敛）**：原先提供的 8 种低频方向 —— `s2tw` / `tw2s` / `t2tw` / `tw2t` / `t2hk` / `hk2t` / `t2jp` / `jp2t` —— 已按用户要求**从引擎侧彻底删除**：`core/opencc.rs` 的 `Direction` 枚举不再有这些变体、`all_standard()` 只返回 6 个、这些 id 反序列化时会失败（不是"UI 不显示但引擎还认"）。需要它们请走 `Custom`（在 `%APPDATA%/AioTextEditor/configs/` 放自己的配置 JSON）。
+>
+> **实现注记（第三阶段）**：`opencc-sys` 0.5.2 内嵌数据本来就不含 `t2seal` / `seal2t` / `s2seal`（小篆，试验性）及其词典，故这三个方向历来不支持。
 
 #### OpenCC 转换链（核心机制）
 
@@ -283,14 +274,10 @@ pub struct ConvertRequest {
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum OpenCCDirection {
+    // PRD v0.5 §3.5：只提供 6 种，其余已从引擎删除
     S2T, T2S,
-    S2TW, TW2S,
     S2TWP, TW2SP,
     S2HK, HK2S,
-    T2TW, TW2T,
-    T2HK, HK2T,
-    T2JP, JP2T,
-    T2SEAL, SEAL2T, S2SEAL,
     Custom { name: String },                  // 用户自定义转换配置
 }
 
@@ -360,7 +347,7 @@ async fn preview_convert(req: ConvertRequest) -> Result<ConvertPreview, String>;
   2. 诊断路径：对结果中的"候选字"反向逐处重查；候选用 `try_alternative_variants`（用户表为空时直接返回 OpenCC 默认歧义）。
   3. 实现参考 OpenCC CLI 的 `--ambiguities` 输出。
 
-  > **实现注记（第三阶段）**：C API 不暴露 OpenCC 内部 Segments（CLI 的 `--ambiguities` 走私有 C++ 接口），故实际采用**同族方向差分**：`s2t`/`s2tw`/`s2twp`/`s2hk`（以及各自的对向族）互为同族，逐行比对用字差异即为歧义片段，`candidates` 为同族其他方向的写法，`primary` 为当前方向结果。对用户语义等价（提示"此处存在其他合理用字"），机制与 CLI 不同。
+  > **实现注记（第三阶段 / v0.5 更新）**：C API 不暴露 OpenCC 内部 Segments（CLI 的 `--ambiguities` 走私有 C++ 接口），故实际采用**同族方向差分**：`s2t`/`s2twp`/`s2hk`（以及各自的对向族）互为同族，逐行比对用字差异即为歧义片段，`candidates` 为同族其他方向的写法，`primary` 为当前方向结果。方向收敛后每族由 4 个降为 3 个，诊断语义不变。对用户语义等价（提示"此处存在其他合理用字"），机制与 CLI 不同。
 - 并行安全：`unsafe impl Send + Sync for OpenccHandle`，但 `last_error()` 非线程安全，因此 `convert` 路径用 `Mutex<()>` 保护（与 messense/opencc-rs 设计一致）。
 
 ### 3.9 单测覆盖

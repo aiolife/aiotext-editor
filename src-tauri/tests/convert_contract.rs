@@ -8,10 +8,12 @@ use aiotext_editor_lib::core::convert::{self, ConvertRequest, PREVIEW_LINE_LIMIT
 use aiotext_editor_lib::core::opencc::Direction;
 use serde_json::json;
 
-/// 前端 6 个常用入口 + 8 个「其他转换」，共 14 个标准方向
-const FRONTEND_DIRECTION_IDS: [&str; 14] = [
-    "s2t", "t2s", "s2twp", "tw2sp", "s2hk", "hk2s", "s2tw", "tw2s", "t2tw", "tw2t", "t2hk", "hk2t",
-    "t2jp", "jp2t",
+/// PRD v0.5 §3.5：前端与引擎只提供这 6 种方向
+const FRONTEND_DIRECTION_IDS: [&str; 6] = ["s2t", "t2s", "s2twp", "tw2sp", "s2hk", "hk2s"];
+
+/// 已彻底删除的方向：引擎侧也必须拒绝（防止哪天被偷偷加回来）
+const REMOVED_DIRECTION_IDS: [&str; 8] = [
+    "s2tw", "tw2s", "t2tw", "tw2t", "t2hk", "hk2t", "t2jp", "jp2t",
 ];
 
 #[test]
@@ -27,12 +29,13 @@ fn frontend_direction_ids_all_deserialize() {
     for id in FRONTEND_DIRECTION_IDS {
         assert!(listed.contains(&id.to_owned()), "后端缺少方向 {id}");
     }
-    // 常用方向恰好 6 个（F-03 §3.2）
-    let common = Direction::all_standard()
-        .iter()
-        .filter(|d| d.is_common())
-        .count();
-    assert_eq!(common, 6);
+    // 删除的方向：反序列化必须失败（引擎侧同样不认）
+    for id in REMOVED_DIRECTION_IDS {
+        assert!(
+            serde_json::from_value::<Direction>(json!(id)).is_err(),
+            "已删除的方向 {id} 又被反序列化成功了"
+        );
+    }
 }
 
 #[test]

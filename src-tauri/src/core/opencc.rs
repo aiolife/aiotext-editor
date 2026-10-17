@@ -23,26 +23,24 @@ use crate::error::{AppError, AppResult};
 
 /// 转换方向（F-03 §3.3 `OpenCCDirection`）
 ///
-/// 说明：规格列出的 17 种配置中，`t2seal` / `seal2t` / `s2seal`（小篆，试验性）
-/// 在本版 `opencc-sys` 0.5.2 内嵌数据中**不存在**（无对应 JSON 与词典），
-/// 故不列入；其余 14 种标准方向 + `Custom`（用户自定义配置）全部支持。
+/// **PRD v0.5 §3.5：只提供 6 种常用方向**（s2t / t2s / s2twp / tw2sp / s2hk / hk2s）。
+///
+/// 原先的 8 种低频方向 —— `s2tw` / `tw2s` / `t2tw` / `tw2t` / `t2hk` / `hk2t` /
+/// `t2jp` / `jp2t` —— 按用户要求**从引擎侧彻底删除**：枚举变体、配置映射、
+/// `all_standard()` 全部移除，它们的 id 在反序列化时会被拒绝（不是"UI 不显示但
+/// 引擎还认"）。需要这些方向的用 `Custom`（`%APPDATA%/AioTextEditor/configs/<name>.json`）。
+///
+/// 另：`t2seal` / `seal2t` / `s2seal`（小篆，试验性）在 `opencc-sys` 0.5.2 内嵌
+/// 数据中本就不存在，历来不支持。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
     S2T,
     T2S,
-    S2TW,
-    TW2S,
     S2TWP,
     TW2SP,
     S2HK,
     HK2S,
-    T2TW,
-    TW2T,
-    T2HK,
-    HK2T,
-    T2JP,
-    JP2T,
     /// 用户自定义转换配置（`%APPDATA%/AioTextEditor/configs/<name>.json`）
     #[serde(rename = "custom")]
     Custom(String),
@@ -54,18 +52,10 @@ impl Direction {
         let stem = match self {
             Direction::S2T => "s2t",
             Direction::T2S => "t2s",
-            Direction::S2TW => "s2tw",
-            Direction::TW2S => "tw2s",
             Direction::S2TWP => "s2twp",
             Direction::TW2SP => "tw2sp",
             Direction::S2HK => "s2hk",
             Direction::HK2S => "hk2s",
-            Direction::T2TW => "t2tw",
-            Direction::TW2T => "tw2t",
-            Direction::T2HK => "t2hk",
-            Direction::HK2T => "hk2t",
-            Direction::T2JP => "t2jp",
-            Direction::JP2T => "jp2t",
             Direction::Custom(name) => return format!("{name}.json"),
         };
         format!("{stem}.json")
@@ -76,18 +66,10 @@ impl Direction {
         match self {
             Direction::S2T => "s2t".into(),
             Direction::T2S => "t2s".into(),
-            Direction::S2TW => "s2tw".into(),
-            Direction::TW2S => "tw2s".into(),
             Direction::S2TWP => "s2twp".into(),
             Direction::TW2SP => "tw2sp".into(),
             Direction::S2HK => "s2hk".into(),
             Direction::HK2S => "hk2s".into(),
-            Direction::T2TW => "t2tw".into(),
-            Direction::TW2T => "tw2t".into(),
-            Direction::T2HK => "t2hk".into(),
-            Direction::HK2T => "hk2t".into(),
-            Direction::T2JP => "t2jp".into(),
-            Direction::JP2T => "jp2t".into(),
             Direction::Custom(name) => format!("custom:{name}"),
         }
     }
@@ -97,68 +79,31 @@ impl Direction {
         match self {
             Direction::S2T => "简体 → 繁体（OpenCC 标准）",
             Direction::T2S => "繁体 → 简体（OpenCC 标准）",
-            Direction::S2TW => "简体 → 台湾正体",
-            Direction::TW2S => "台湾正体 → 简体",
             Direction::S2TWP => "简体 → 台湾正体（含台湾惯用词彙）",
             Direction::TW2SP => "台湾正体 → 简体（含大陆惯用词彙）",
             Direction::S2HK => "简体 → 香港繁体",
             Direction::HK2S => "香港繁体 → 简体",
-            Direction::T2TW => "繁体 → 台湾正体（仅字形调整）",
-            Direction::TW2T => "台湾正体 → 繁体",
-            Direction::T2HK => "繁体 → 香港繁体",
-            Direction::HK2T => "香港繁体 → 繁体",
-            Direction::T2JP => "繁体 → 日文旧字体",
-            Direction::JP2T => "日文新字体 → 繁体",
             Direction::Custom(_) => "用户自定义转换配置",
         }
     }
 
-    /// 是否 UI 常用入口（F-03 §3.2：6 个常用方向）
-    pub fn is_common(&self) -> bool {
-        matches!(
-            self,
-            Direction::S2T
-                | Direction::T2S
-                | Direction::S2TWP
-                | Direction::TW2SP
-                | Direction::S2HK
-                | Direction::HK2S
-        )
-    }
-
     /// 同族方向（歧义诊断差分用）：同一转换族的其他标准方向
+    ///
+    /// 删掉 8 种低频方向后只剩两族（简→繁 / 繁→简）。差分照样能标出地区用字歧义：
+    /// `s2t` 与 `s2twp` / `s2hk` 的用字差异就是"这里有别的合理写法"。
     pub fn family(&self) -> Vec<Direction> {
         match self {
-            Direction::S2T | Direction::S2TW | Direction::S2TWP | Direction::S2HK => {
-                vec![
-                    Direction::S2T,
-                    Direction::S2TW,
-                    Direction::S2TWP,
-                    Direction::S2HK,
-                ]
+            Direction::S2T | Direction::S2TWP | Direction::S2HK => {
+                vec![Direction::S2T, Direction::S2TWP, Direction::S2HK]
             }
-            Direction::T2S | Direction::TW2S | Direction::TW2SP | Direction::HK2S => {
-                vec![
-                    Direction::T2S,
-                    Direction::TW2S,
-                    Direction::TW2SP,
-                    Direction::HK2S,
-                ]
+            Direction::T2S | Direction::TW2SP | Direction::HK2S => {
+                vec![Direction::T2S, Direction::TW2SP, Direction::HK2S]
             }
-            Direction::T2TW | Direction::TW2T | Direction::T2HK | Direction::HK2T => {
-                vec![
-                    Direction::T2TW,
-                    Direction::TW2T,
-                    Direction::T2HK,
-                    Direction::HK2T,
-                ]
-            }
-            Direction::T2JP | Direction::JP2T => vec![Direction::T2JP, Direction::JP2T],
             Direction::Custom(_) => Vec::new(),
         }
     }
 
-    /// 全部标准方向（UI 菜单用）
+    /// 全部提供的标准方向（PRD v0.5 §3.5：只保留常用 6 种）
     pub fn all_standard() -> Vec<Direction> {
         vec![
             Direction::S2T,
@@ -167,14 +112,6 @@ impl Direction {
             Direction::TW2SP,
             Direction::S2HK,
             Direction::HK2S,
-            Direction::S2TW,
-            Direction::TW2S,
-            Direction::T2TW,
-            Direction::TW2T,
-            Direction::T2HK,
-            Direction::HK2T,
-            Direction::T2JP,
-            Direction::JP2T,
         ]
     }
 }
@@ -183,26 +120,21 @@ impl Direction {
 // 内嵌数据落盘
 // ---------------------------------------------------------------------------
 
-/// 全部内嵌数据（16 配置 JSON + 22 词典）
+/// 落盘的内嵌数据：**仍在提供**的 6 个配置 JSON + 全部 22 个词典
+///
+/// 已删除方向的配置（hk2t / jp2t / s2tw / s2hkp / t2hk / t2jp / t2tw / tw2s /
+/// tw2t / hk2sp）不再写出——它们的 id 已无法反序列化，写出来只是给临时目录添
+/// 无用文件。词典仍全量写出：剩下 6 个配置会引用其中大部分（含地区变体词典），
+/// 逐个挑「谁用谁」不划算也容易漏。
 fn all_data() -> Vec<&'static opencc_sys::Data> {
     vec![
-        // 配置 JSON
+        // 配置 JSON（PRD v0.5 §3.5：只剩 6 种方向）
         &opencc_sys::HK2S_JSON,
-        &opencc_sys::HK2SP_JSON,
-        &opencc_sys::HK2T_JSON,
-        &opencc_sys::JP2T_JSON,
         &opencc_sys::S2HK_JSON,
-        &opencc_sys::S2HKP_JSON,
         &opencc_sys::S2T_JSON,
-        &opencc_sys::S2TW_JSON,
         &opencc_sys::S2TWP_JSON,
-        &opencc_sys::T2HK_JSON,
-        &opencc_sys::T2JP_JSON,
         &opencc_sys::T2S_JSON,
-        &opencc_sys::T2TW_JSON,
-        &opencc_sys::TW2S_JSON,
         &opencc_sys::TW2SP_JSON,
-        &opencc_sys::TW2T_JSON,
         // 词典
         &opencc_sys::CJK_COMPATIBILITY_IDEOGRAPHS_OCD2,
         &opencc_sys::HK_PHRASES_OCD2,
@@ -263,19 +195,11 @@ pub fn cleanup() {
 fn embedded_config(direction: &Direction) -> AppResult<&'static [u8]> {
     let data = match direction {
         Direction::HK2S => &opencc_sys::HK2S_JSON,
-        Direction::HK2T => &opencc_sys::HK2T_JSON,
-        Direction::JP2T => &opencc_sys::JP2T_JSON,
         Direction::S2HK => &opencc_sys::S2HK_JSON,
         Direction::S2T => &opencc_sys::S2T_JSON,
-        Direction::S2TW => &opencc_sys::S2TW_JSON,
         Direction::S2TWP => &opencc_sys::S2TWP_JSON,
-        Direction::T2HK => &opencc_sys::T2HK_JSON,
-        Direction::T2JP => &opencc_sys::T2JP_JSON,
         Direction::T2S => &opencc_sys::T2S_JSON,
-        Direction::T2TW => &opencc_sys::T2TW_JSON,
-        Direction::TW2S => &opencc_sys::TW2S_JSON,
         Direction::TW2SP => &opencc_sys::TW2SP_JSON,
-        Direction::TW2T => &opencc_sys::TW2T_JSON,
         Direction::Custom(_) => {
             return Err(AppError::UnsupportedDirection(
                 "自定义方向不参与内联叠加".into(),
@@ -617,9 +541,15 @@ mod tests {
             Direction::Custom("my-config".into()).config_name(),
             "my-config.json"
         );
-        assert!(Direction::S2T.is_common());
-        assert!(!Direction::T2JP.is_common());
-        assert_eq!(Direction::all_standard().len(), 14);
+        // PRD v0.5 §3.5：只保留 6 种常用方向
+        assert_eq!(Direction::all_standard().len(), 6);
         assert!(Direction::S2T.family().contains(&Direction::S2TWP));
+        // 删掉的 8 种方向，引擎侧也不认（反序列化必须失败）
+        for removed in ["s2tw", "tw2s", "t2tw", "tw2t", "t2hk", "hk2t", "t2jp", "jp2t"] {
+            assert!(
+                serde_json::from_value::<Direction>(serde_json::json!(removed)).is_err(),
+                "{removed} 应已删除，却仍能被反序列化"
+            );
+        }
     }
 }

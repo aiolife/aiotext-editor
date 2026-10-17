@@ -108,9 +108,11 @@ export const COMMANDS: readonly CommandMeta[] = [
 
   // 视图
   { id: 'view.theme', label: '切换主题（跟随系统 / 浅 / 深）', group: '视图', defaultKey: null },
-  { id: 'view.toggleToolbar', label: '显示 / 隐藏工具栏', group: '视图', defaultKey: null },
+  // 顶栏现在只有一条菜单栏（PRD v0.4 §3.5），这个开关控制的就是它
+  { id: 'view.toggleToolbar', label: '显示 / 隐藏菜单栏', group: '视图', defaultKey: null },
   { id: 'view.toggleStatusBar', label: '显示 / 隐藏状态栏', group: '视图', defaultKey: null },
   { id: 'view.toggleLineNumber', label: '显示 / 隐藏行号', group: '视图', defaultKey: null },
+  { id: 'view.toggleWrap', label: '显示 / 隐藏自动换行', group: '视图', defaultKey: null },
 
   // 设置
   { id: 'settings.open', label: '选项…', group: '设置', defaultKey: mod(',') },

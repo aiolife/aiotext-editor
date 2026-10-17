@@ -202,7 +202,8 @@ try {
           title: document.title,
           editor: !!q('.cm-content'),
           tabs: document.querySelectorAll('.tabbar-item').length,
-          helpButton: [...document.querySelectorAll('header .menu-trigger')].some((e) => e.textContent.includes('帮助')),
+          // PRD v0.5 §3.5：顶栏只有一条菜单栏（.menubar-trigger），旧的按钮式 .menu-trigger 已不存在
+          helpButton: [...document.querySelectorAll('header .menubar-trigger, header .menu-trigger')].some((e) => e.textContent.includes('帮助')),
           startup: window.__aioStartupMetrics ?? null,
         };
       })()`,
@@ -228,6 +229,40 @@ try {
     });
     if (conv.exceptionDetails) throw new Error(`转换求值异常：${conv.exceptionDetails.text}`);
     const converted = conv.result.value;
+
+    // PRD v0.5 §3.5：「功能」菜单 = 常用 6 个转换方向**直接点**（不套二级菜单）
+    // + 18 个整理工具按后端目录分 4 组。这条断言盯的是结构不回退——
+    // 谁再把方向塞回二级菜单、或把工具分组拍平，这里立刻红。
+    const func = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        const tick = () => new Promise((r) => setTimeout(r, 80));
+        const trigger = [...document.querySelectorAll('header .menubar-trigger')]
+          .find((e) => e.textContent.trim() === '功能');
+        if (!trigger) return { ok: false, reason: '顶栏没有「功能」入口' };
+        trigger.click();
+        await tick();
+        const panel = trigger.parentElement.querySelector('.menu-panel');
+        if (!panel) return { ok: false, reason: '「功能」菜单没展开' };
+        // 第一条分隔线之前 = 直接可点的转换方向（PRD v0.5 §3.5：恰好 6 个）
+        // 注意不能靠「含『简』且含『繁』」去筛标签：台湾那两项是
+        // 「简体 → 台湾正体…」/「台湾正体 → 简体…」，标签里没有「繁」字，会被漏掉。
+        const directions = [];
+        for (const el of panel.children) {
+          if (el.classList.contains('menu-sep')) break;
+          if (el.classList.contains('menu-item')) directions.push(el.textContent.trim());
+        }
+        const groups = [...panel.querySelectorAll('.menu-group-title')]
+          .map((e) => e.textContent.trim())
+          .filter((g) => g !== '其他转换');
+        const subs = panel.querySelectorAll('.menu-sub').length;
+        trigger.click(); // 收起，别挡住后面的断言
+        return { ok: true, directions, groups, subs };
+      })()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (func.exceptionDetails) throw new Error(`菜单求值异常：${func.exceptionDetails.text}`);
+    const funcMenu = func.result.value;
 
     const errors = cdp.events.filter(
       (e) =>
@@ -257,6 +292,17 @@ try {
     // 只断言「漢/汉」这种无歧义的字符级映射：軟件 还是 軟體 取决于方向配置，
     // 拿它当期望值会把「配置差异」误报成「词典坏了」。
     check('OpenCC 繁→简可用', typeof converted?.t2s === 'string' && converted.t2s.includes('汉'), converted?.t2s);
+    check(
+      '功能菜单：常用 6 个转换方向直接可点',
+      funcMenu?.ok === true && funcMenu.directions.length === 6,
+      funcMenu?.ok ? `${funcMenu.directions.length} 个：${funcMenu.directions.join(' / ')}` : funcMenu?.reason,
+    );
+    check(
+      '功能菜单：整理工具分 4 组',
+      funcMenu?.groups?.length === 4,
+      funcMenu?.groups?.join(' / ') ?? '',
+    );
+    check('功能菜单：转换方向不再套二级菜单', funcMenu?.subs === 0, `${funcMenu?.subs} 个二级菜单`);
     check('无页面运行时错误', errors.length === 0, errors.length ? errors.map((e) => e.method).join(',') : 'none');
 
     cdp.ws.close();

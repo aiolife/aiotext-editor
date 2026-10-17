@@ -24,13 +24,37 @@ body,
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 3px 8px;
   border-bottom: 1px solid rgba(128, 128, 128, 0.3);
 }
 
-.app-title {
-  font-weight: 600;
-  margin-right: 8px;
+/* 菜单栏（PRD v0.4 §3.5）：纯文字，没有按钮边框。配色沿用系统色，
+   浅色 / 深色主题下不需要第二套色值 */
+.menubar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.menubar-trigger {
+  padding: 3px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.menubar-trigger:hover:not(:disabled),
+.menubar-trigger[aria-expanded='true'] {
+  background: rgba(128, 128, 128, 0.18);
+}
+
+.menubar-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .app-main {
@@ -422,6 +446,28 @@ body,
   cursor: pointer;
 }
 
+/* 带键位提示 / 勾选框的菜单项：一行两端对齐 */
+.menu-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.menu-item-check {
+  flex: none;
+  width: 14px;
+  text-align: center;
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menu-item:disabled:hover {
+  background: transparent;
+}
+
 .menu-panel {
   position: absolute;
   top: 100%;
@@ -468,33 +514,6 @@ body,
 
 .menu-item:hover {
   background: rgba(25, 118, 210, 0.14);
-}
-
-.menu-item-sub {
-  display: flex;
-  justify-content: space-between;
-}
-
-.menu-sub {
-  position: relative;
-}
-
-.menu-sub-panel {
-  display: none;
-  position: absolute;
-  top: -4px;
-  left: 100%;
-  min-width: 240px;
-  padding: 4px 0;
-  background: canvas;
-  color: canvastext;
-  border: 1px solid rgba(128, 128, 128, 0.4);
-  border-radius: 6px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
-}
-
-.menu-sub:hover .menu-sub-panel {
-  display: block;
 }
 
 .menu-sep {

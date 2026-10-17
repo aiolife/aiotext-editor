@@ -15,11 +15,12 @@ use crate::core::opencc::Direction;
 pub struct DirectionMeta {
     pub id: String,
     pub label: String,
-    /// 是否进入「功能 → 转换」顶级菜单（F-03 §3.2：6 个常用入口）
-    pub common: bool,
 }
 
 /// 列出全部可用转换方向（F-03 §3.4 `list_opencc_directions`）
+///
+/// PRD v0.5 §3.5：只有 6 种方向（s2t / t2s / s2twp / tw2sp / s2hk / hk2s）——
+/// 其余低频方向已从 `Direction` 枚举删除，不需要再区分「常用 / 其他」。
 #[tauri::command]
 pub async fn list_opencc_directions() -> Result<Vec<DirectionMeta>, String> {
     Ok(Direction::all_standard()
@@ -27,7 +28,6 @@ pub async fn list_opencc_directions() -> Result<Vec<DirectionMeta>, String> {
         .map(|direction| DirectionMeta {
             id: direction.id(),
             label: direction.label().to_owned(),
-            common: direction.is_common(),
         })
         .collect())
 }

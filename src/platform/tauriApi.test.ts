@@ -91,14 +91,14 @@ beforeEach(() => {
 
 describe('listOpenccDirections', () => {
   it('调用无参命令并映射元数据', async () => {
+    // PRD v0.5 §3.5：引擎只提供 6 种，字段也不再有「common」
     invokeMock.mockResolvedValue([
-      { id: 's2t', label: '简体 → 繁体（OpenCC 标准）', common: true },
-      { id: 't2jp', label: '繁体 → 日文旧字体', common: false },
+      { id: 's2t', label: '简体 → 繁体（OpenCC 标准）' },
+      { id: 'hk2s', label: '香港繁体 → 简体' },
     ]);
     const list = await listOpenccDirections();
     expect(invokeMock).toHaveBeenCalledWith('list_opencc_directions');
-    expect(list.map((d) => d.id)).toEqual(['s2t', 't2jp']);
-    expect(list.filter((d) => d.common)).toHaveLength(1);
+    expect(list.map((d) => d.id)).toEqual(['s2t', 'hk2s']);
   });
 });
 

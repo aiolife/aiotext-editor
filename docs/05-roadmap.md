@@ -105,7 +105,7 @@ aiotext-editor/
 8. UI：歧义片段诊断（OpenCC CLI `--ambiguities` 风格的弹窗）。
 9. 非 Unicode 编码保存路径：encoding_rs 数字字符引用 `&#xNNNN;` + 保存前预检弹窗。
 10. 测试：10 万字样本，与 OpenCC CLI 输出对比。
-11. 测试：17 种转换各跑一遍回归。
+11. 测试：提供的 6 种转换各跑一遍回归。
 
 ---
 

@@ -9,9 +9,9 @@
 //! - **用户词典叠加**：`apply_user_tables` 指定的 F-04 表文件（`tables/<name>.tab`）
 //!   被编译为 OpenCC 内联字典，优先级高于标准词库。
 //! - **歧义诊断**：C API 不暴露 OpenCC 内部 Segments（CLI `--ambiguities` 用的私有
-//!   接口），故本实现采用**同族方向差分**——同一段文本在 s2t / s2tw / s2twp / s2hk
-//!   等标准下用字不同的区段即视为歧义片段，`candidates` 为各族结果，`primary` 为
-//!   当前方向结果。这是自研诊断，语义与 CLI 的"一对多提示"一致（用户可据此决定
+//!   接口），故本实现采用**同族方向差分**——同一段文本在 s2t / s2twp / s2hk
+//!   （以及各自的对向族）等标准下用字不同的区段即视为歧义片段，`candidates` 为
+//!   各族结果，`primary` 为当前方向结果。这是自研诊断，语义与 CLI 的"一对多提示"一致（用户可据此决定
 //!   是否改用其他地区标准）。
 
 use serde::{Deserialize, Serialize};

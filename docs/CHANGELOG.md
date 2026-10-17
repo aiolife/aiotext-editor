@@ -4,6 +4,53 @@
 
 ---
 
+## v0.4 — 2026-10-17
+
+### 主要变更：顶栏改为纯文字菜单栏
+
+**背景**：顶栏堆着「AioTextEditor」品牌文字 + 七个文件按钮 + 查找/替换 + 功能 ▾ + 整理 ▾ + 比较/合并/批处理 + 设置 ▾ + 帮助，按钮只增不减。按 iml-editor-lite 的形态收口成 `文件 编辑 功能 视图 帮助` 五条纯文字菜单；品牌文字删除（窗口标题栏已经写着它）。「功能」保持一级：常用 6 个转换方向**直接点用**，18 个整理工具按后端目录分 4 组铺在它下面。
+
+### 改动的文档
+
+| 文档 | 变更 |
+|------|------|
+| `PRD.md` | v0.4 → **v0.5**；§3.5 由「七个按钮收进『文件 ▾』」改写为「四条纯文字菜单栏」——目标形态、四个菜单的完整条目表、`T-1`~`T-6`、落地口径（菜单项从命令注册表现取）；§5 风险行与 §6 验收项同步改写 |
+| `04-ui-ux.md` | §1 布局总览：去掉图标工具栏与 7 个顶级菜单的旧示意，改为四条文字菜单；§2 新增「顶级菜单归属」映射（搜索 / 功能 / 设置 并入编辑与视图）；§2.3「工具栏」开关 →「菜单栏」；§3.5 设置页勾选项与兜底说明同步 |
+
+### 代码实现
+
+| 文件 | 变更 |
+|------|------|
+| `src/components/MenuBar.tsx` | **新增**：文件 / 编辑 / 功能 / 视图 / 帮助五条菜单；命令项的标签、键位提示、禁用态全部从 `COMMANDS` + 命令分发器 + 当前绑定现取；**「功能」菜单**：6 个常用转换方向直接点（**其余 11 种彻底不提供**，连「其他转换」分组一起删）+ 转换预览… + 18 个工具按后端目录分 4 组（组间分隔线，限高滚动）；**「视图」菜单**在「行号 ☑」下新增「自动换行 ☑」（`view.toggleWrap`）；「替换表管理…」按用户要求放「编辑」；已展开时鼠标划过别的入口自动切换；点外部 / `Esc` 收起 |
+| `src/App.tsx` | 载入方向列表时**只留 `common` 的 6 种**（`.then((list) => setDirections(list.filter((d) => d.common)))`）——过滤放在数据源头，菜单与「转换预览…」对话框因此都只剩 6 种，不留第二个入口；新增 `view.toggleWrap` 命令处理（切 `editor.wrap`）；MenuBar 增传 `wrap` |
+| `src/shared/shortcuts.ts` | 命令表新增 `view.toggleWrap`（「显示 / 隐藏自动换行」，默认不绑键，可在自定义快捷键里绑） |
+| `scripts/smoke.mjs` | 新增 3 条断言：展开「功能」菜单 → 转换方向 **6 个**且直接可点、整理工具分 **4 组**、菜单内 `.menu-sub` 为 **0**（盯住「不再套二级菜单」不回退） |
+| `src/App.tsx` | 删除品牌文字、全部平铺按钮、`设置 ▾` 与「帮助」下拉（连同 `settingsMenuOpen` 状态与外部点击 effect），顶栏只渲染 `<MenuBar>` |
+| `src/components/ConvertMenu.tsx`、`src/components/ToolMenu.tsx` | **删除**：内容并入 `MenuBar`，不留两套菜单实现 |
+| `src/styles/global.css` | 新增 `.menubar` / `.menubar-trigger`（无边框、悬停浅底）、`.menu-item-row`（两端对齐）、`.menu-item-check`（勾选列）、`.menu-sub-panel-tall`（二级菜单限高滚动）、`.menu-item:disabled`；`.app-header` 内边距收紧、删除 `.app-title` |
+| `src-tauri/src/core/opencc.rs` | **引擎侧删除 8 种低频方向**：`Direction` 枚举只留 `S2T` / `T2S` / `S2TWP` / `TW2SP` / `S2HK` / `HK2S` / `Custom`；删掉 `config_name` / `id` / `label` / `embedded_config` 的对应分支、`is_common()`（不再有「常用 / 其他」之分）、`all_standard()` 由 14 个降为 6 个；`family()` 的两族各由 4 个降为 3 个（歧义诊断语义不变）；`all_data()` 不再写出这 8 个配置 JSON（词典仍全量写出） |
+| `src-tauri/src/commands/convert.rs` | `DirectionMeta` 去掉 `common` 字段——6 种就是全部，不需要再区分 |
+| `src-tauri/tests/convert_contract.rs` | 前端常量由 14 个降为 6 个；新增 `REMOVED_DIRECTION_IDS`，断言这 8 个 id **反序列化失败**（盯住引擎侧不回退） |
+| `src/platform/tauriApi.ts` | `OpenccDirectionMeta` 去掉 `common`（注释写明只有 6 种） |
+| `src/shared/shortcuts.ts` | `view.toggleToolbar` 标签改为「显示 / 隐藏菜单栏」 |
+| `src/components/SettingsDialog.tsx` | 「显示工具栏」→「显示菜单栏」 |
+
+### 关键技术决策
+
+1. **菜单不另写一套行为**：命令项的标签、键位提示、禁用条件全部取自命令分发表与当前绑定，和快捷键同一份数据——不会出现「菜单写着 `Ctrl+Shift+A` 但按键不生效」的漂移，用户改键位后菜单立刻跟着变。
+2. **其余低频方向从引擎侧彻底删除**（不是"UI 不显示"）：`Direction` 枚举删掉 8 个变体（`s2tw` / `tw2s` / `t2tw` / `tw2t` / `t2hk` / `hk2t` / `t2jp` / `jp2t`），它们的 id 反序列化会失败，前端即便手搓一个 `invoke('convert_opencc', { direction: 't2jp' })` 也会被拒。前端侧的 `.common` 字段与过滤逻辑因此一并删除——6 种就是全部，没有"常用 / 其他"之分了。`family()` 由 4 元降为 3 元，歧义诊断（同族方向差分）照样工作。需要这些方向的用户走 `Custom` 配置。
+3. **18 个整理工具按后端 catalog 的顺序分 4 组铺开**（行处理 / 空格与全半角 / 标点与括号 / 排版与分段），组间分隔线、组内顺序由后端决定，前端不重排。
+4. **「自动换行」进视图菜单**：它是「看的方式」，和行号 / 状态栏同类，不该埋在「选项 → 编辑器」里；勾选态与选项对话框里那个复选框是同一个 `editor.wrap`，两侧永远一致。
+5. **顶级菜单定为五条**：搜索并入「编辑」（含比较 / 合并 / 批处理）、设置并入「视图」，转换与整理合到「功能」。
+6. **品牌文字删除**：窗口标题栏已有 `AioTextEditor`，顶栏重复一遍只是噪音。
+7. **「显示菜单栏」留兜底**：关掉顶栏后 `Ctrl + ,` 仍能打开选项恢复；这条写进 `04-ui-ux §3.5`，防止以后改成不可恢复。
+
+### 验证
+
+`cargo test` **234 项全过**（含新增的「已删除方向反序列化失败」断言）；`npm run build`（`tsc -b` + vite）通过；`npm run test` **140/140**；`npm run lint` 对 `src/` **0 问题**（残留的 16 个 `no-undef` 仍全部出自 `d:\site\aiotext-editor\aiotext-editor\` 这份未清理的旧克隆）。
+
+---
+
 ## v0.3 — 2026-10-17
 
 ### 主要变更：标签关闭与未保存处理

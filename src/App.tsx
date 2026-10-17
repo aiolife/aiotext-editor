@@ -35,7 +35,6 @@ import {
   resolveBindings,
 } from './shared/shortcuts';
 import {
-  TOOL_SHORTCUTS,
   pickOpenFile,
   pickSaveFile,
   fsCheckMappable,
@@ -67,11 +66,10 @@ import { StatusBar } from './components/StatusBar';
 import { ReloadDialog } from './components/ReloadDialog';
 import { UnmappableDialog } from './components/UnmappableDialog';
 import { ConfirmCloseDialog, type CloseDecision } from './components/ConfirmCloseDialog';
-import { ConvertMenu } from './components/ConvertMenu';
+import { MenuBar } from './components/MenuBar';
 import { ConvertDialog, type ConvertTarget } from './components/ConvertDialog';
 import { SearchPanel } from './components/SearchPanel';
 import { ReplaceTableDialog } from './components/ReplaceTableDialog';
-import { ToolMenu } from './components/ToolMenu';
 import { ToolOptionsDialog } from './components/ToolOptionsDialog';
 import { CompareDialog } from './components/CompareDialog';
 import { CompareBar } from './components/CompareBar';
@@ -226,11 +224,8 @@ export default function App() {
   // 第八阶段：偏好设置（F-11）。`openTab` 为 null 表示未打开；
   // 「自定义快捷键…」与「选项…」共用同一个对话框，只是落到不同页签
   const [settingsOpen, setSettingsOpen] = useState<SettingsTab | null>(null);
-  /** 顶栏「设置 ▾」下拉是否展开 */
-  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
-  /** 第九阶段：帮助与快捷键对话框（F1 / 顶栏「帮助」） */
+  /** 第九阶段：帮助与快捷键对话框（F1 / 帮助菜单） */
   const [helpOpen, setHelpOpen] = useState(false);
-  const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   /** 外部驱动的查找面板命令（F3 / Shift+F3 / Ctrl+H 聚焦替换框） */
   const [searchExternal, setSearchExternal] = useState<{
     kind: 'next' | 'prev' | 'focusFind' | 'focusReplace';
@@ -263,6 +258,8 @@ export default function App() {
 
   // 转换方向列表（引擎元数据；失败时禁用转换入口）
   useEffect(() => {
+    // PRD v0.5 §3.5：引擎侧已删除其余方向（`Direction` 枚举只留 6 种），
+    // 前端不再需要过滤——列表就是全部可用方向。
     listOpenccDirections()
       .then(setDirections)
       .catch((e) => setError(`繁简引擎初始化失败：${String(e)}（转换功能已禁用）`));
@@ -360,21 +357,13 @@ export default function App() {
 
   const loadSettings = useSettingsStore((s) => s.load);
   const appearance = useSettingsStore((s) => s.settings.appearance);
+  /** 自动换行在「编辑器」分组下（F-11），视图菜单要读它的勾选态 */
+  const editorSettings = useSettingsStore((s) => s.settings.editor);
   const shortcuts = useSettingsStore((s) => s.settings.shortcuts);
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
 
-  // 设置下拉：点空白处收起（沿用 ConvertMenu / ToolMenu 的 rootRef 做法）
-  useEffect(() => {
-    if (!settingsMenuOpen) return;
-    const onPointerDown = (e: MouseEvent) => {
-      if (settingsMenuRef.current?.contains(e.target as Node)) return;
-      setSettingsMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [settingsMenuOpen]);
 
   /**
    * 主题 → `color-scheme`。
@@ -710,7 +699,7 @@ export default function App() {
       setNotice(null);
       setConvertDialog({
         tabId: activeTab.id,
-        direction: directionId ?? directions.find((d) => d.common)?.id ?? 's2t',
+        direction: directionId ?? directions[0]?.id ?? 's2t',
         target: buildTarget(activeTab),
       });
     },
@@ -1018,6 +1007,13 @@ export default function App() {
         run: () =>
           updateSettings({ appearance: { ...appearance, showLineNumber: !appearance.showLineNumber } }),
       },
+      'view.toggleWrap': {
+        run: () => {
+          // 现取而不是闭包里的 editorSettings：躲开 stale closure，也不必进依赖数组
+          const editor = useSettingsStore.getState().settings.editor;
+          updateSettings({ editor: { ...editor, wrap: !editor.wrap } });
+        },
+      },
       // 设置
       'settings.open': { run: () => setSettingsOpen('appearance') },
       'settings.shortcuts': { run: () => setSettingsOpen('shortcuts') },
@@ -1111,150 +1107,34 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <span className="app-title">AioTextEditor</span>
-        {/* 工具栏可由「视图 → 显示 / 隐藏工具栏」整体收起（F-11） */}
+        {/* 纯文字菜单栏（PRD v0.4 §3.5）：品牌名不再占位——窗口标题栏已有，重复一遍只是噪音 */}
         {appearance.showToolbar ? (
-          <>
-            <button onClick={handleNew} disabled={busy}>
-              新建
-            </button>
-            <button onClick={handleOpen} disabled={busy}>
-              打开…
-            </button>
-            <button onClick={handleSave} disabled={busy || !activeTab} title="Ctrl+S">
-              保存
-            </button>
-            <button onClick={handleSaveAs} disabled={busy || !activeTab} title="Ctrl+Shift+S">
-              另存为…
-            </button>
-            <button
-              onClick={() => void handleSaveAll()}
-              disabled={busy || !tabs.some((t) => t.dirty)}
-              title="保存所有有改动的文件（Ctrl+Shift+A）；不关闭任何标签"
-            >
-              全部保存
-            </button>
-            <button
-              onClick={() => void handleCloseAll()}
-              disabled={busy || tabs.length === 0}
-              title="关闭所有标签（Ctrl+Shift+W）；有未保存内容时先询问"
-            >
-              全部关闭
-            </button>
-            <button
-              onClick={() => activeTab && setReloadTabId(activeTab.id)}
-              disabled={busy || !activeTab?.filePath}
-            >
-              重新载入…
-            </button>
-            <button
-              onClick={() => {
-                driveSearch('focusFind');
-                setSearchOpen(true);
-              }}
-              disabled={!activeTab}
-              title="Ctrl+F / Ctrl+H"
-            >
-              查找/替换
-            </button>
-            <ConvertMenu
-              directions={directions}
-              disabled={busy || !activeTab || directions.length === 0}
-              onPick={handleConvertPick}
-              onOpenDialog={() => handleOpenConvertDialog()}
-              onOpenTables={() => setTableDialogOpen(true)}
-            />
-            <ToolMenu
-              tools={tools}
-              disabled={busy || !activeTab || tools.length === 0}
-              shortcuts={TOOL_SHORTCUTS}
-              onRun={handleRunTool}
-              onConfigure={handleConfigureTool}
-            />
-            <button
-              onClick={() => setCompareDialogOpen(true)}
-              disabled={busy || !activeTab || tabs.length < 2 || compare !== null}
-              title="平铺比较两份文本（F-06）：F5 跳差异，Shift+F5 从光标重比"
-            >
-              比较…
-            </button>
-            <button onClick={() => setMergeDialogOpen(true)} disabled={busy} title="合并文件（F-07）">
-              合并…
-            </button>
-            <button
-              onClick={() => setBatchDialogOpen(true)}
-              disabled={busy}
-              title="批量运行整理流水线（F-08）：目录 + 步骤 + 备份 + 进度"
-            >
-              批处理…
-            </button>
-          </>
+          <MenuBar
+            appearance={appearance}
+            wrap={editorSettings.wrap}
+            bindings={bindings}
+            handlers={handlers}
+            compareDisabled={busy || !activeTab || tabs.length < 2 || compare !== null}
+            convertDisabled={busy || !activeTab || directions.length === 0}
+            toolDisabled={busy || !activeTab || tools.length === 0}
+            directions={directions}
+            tools={tools}
+            actions={{
+              convert: handleConvertPick,
+              convertDialog: () => handleOpenConvertDialog(),
+              tables: () => setTableDialogOpen(true),
+              runTool: handleRunTool,
+              configureTool: handleConfigureTool,
+              compare: () => setCompareDialogOpen(true),
+              merge: () => setMergeDialogOpen(true),
+              batch: () => setBatchDialogOpen(true),
+              resetSettings: () => {
+                void useSettingsStore.getState().reset();
+                setNotice('已恢复默认设置');
+              },
+            }}
+          />
         ) : null}
-        {/* 设置入口**不在**可隐藏的工具栏里：否则误关工具栏就再也打不开了 */}
-        <div className="menu-root" ref={settingsMenuRef}>
-          <button
-            type="button"
-            className="menu-trigger"
-            aria-haspopup="menu"
-            aria-expanded={settingsMenuOpen}
-            title="选项（Ctrl+,）"
-            onClick={() => setSettingsMenuOpen((v) => !v)}
-          >
-            设置 ▾
-          </button>
-          {settingsMenuOpen ? (
-            <div className="menu-panel" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                className="menu-item"
-                onClick={() => {
-                  setSettingsMenuOpen(false);
-                  setSettingsOpen('appearance');
-                }}
-              >
-                <span className="menu-item-label">选项…</span>
-                <span className="menu-item-more">Ctrl+,</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="menu-item"
-                onClick={() => {
-                  setSettingsMenuOpen(false);
-                  setSettingsOpen('shortcuts');
-                }}
-              >
-                <span className="menu-item-label">自定义快捷键…</span>
-              </button>
-              <div className="menu-sep" />
-              <button
-                type="button"
-                role="menuitem"
-                className="menu-item"
-                onClick={() => {
-                  setSettingsMenuOpen(false);
-                  void useSettingsStore.getState().reset();
-                  setNotice('已恢复默认设置');
-                }}
-              >
-                <span className="menu-item-label">恢复默认设置</span>
-              </button>
-            </div>
-          ) : null}
-        </div>
-        {/* 第九阶段：帮助入口。与设置同理放在**不可隐藏**的位置——工具栏被关掉也要能打开 */}
-        <div className="menu-root">
-          <button
-            type="button"
-            className="menu-trigger"
-            aria-haspopup="dialog"
-            title="帮助与快捷键（F1）"
-            onClick={() => setHelpOpen(true)}
-          >
-            帮助
-          </button>
-        </div>
       </header>
 
       <TabBar

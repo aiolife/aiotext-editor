@@ -266,7 +266,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="显示工具栏">
+              <Row label="显示菜单栏">
                 <input
                   type="checkbox"
                   checked={settings.appearance.showToolbar}

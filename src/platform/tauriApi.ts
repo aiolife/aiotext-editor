@@ -118,11 +118,9 @@ export function isUnicodeEncoding(label: string): boolean {
 
 /** 转换方向元数据（list_opencc_directions） */
 export interface OpenccDirectionMeta {
-  /** 's2t' / 't2s' / … */
+  /** 's2t' / 't2s' / 's2twp' / 'tw2sp' / 's2hk' / 'hk2s' —— 引擎只提供这 6 种 */
   id: string;
   label: string;
-  /** 是否进入「功能 → 转换」顶级菜单（6 个常用入口） */
-  common: boolean;
 }
 
 /** F-03 §3.3 BracketPair（括号对豁免） */

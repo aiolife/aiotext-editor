@@ -315,7 +315,7 @@ npm run tauri:build     # 出包
 - 运行时机制（第一阶段已实测验证）：**把所需 `Data` 写入临时目录 → `opencc_open(临时目录/xx.json)`**。配置目录自动加入词典搜索路径（与官方 `opencc-rs` crate 同机制）。
 - **F-04 用户词典叠加**：自定义配置 JSON 中在 `short_circuit` 组首位放 `{"type":"inline","entries":{...}}` 字典，即可让用户表优先于标准词库（第一阶段已实测验证："软件"→"軟體" 优先于 s2t 标准结果）。
 - 嵌入词典包括：`STCharacters`、`STPhrases`、`TSCharacters`、`TSPhrases`、`HKVariants` / `HKVariantsRev`、`JPVariants` / `JPVariantsRev`、`TWVariants` / `TWVariantsRev`、`TWPhrasesIT`、`TWPhrasesName`、`TWPhrasesOther`、`TWPhrases` 等等。
-- 17 种标准配置均可用（详见 PRD §1.5 / 功能规格 F-03）。
+- 提供的 6 种标准配置均可用（s2t / t2s / s2twp / tw2sp / s2hk / hk2s；详见 PRD §1.5 与功能规格 F-03 §3.2）——其余低频方向已从 `Direction` 枚举删除。
 
 > **构建环境要求（第一阶段实测）**：`opencc-sys` 构建链 = cmake ≥ 3.20 + MSVC（VCTools）+ **LLVM/libclang**（bindgen 生成 FFI 所需，CI 与开发机都要装）。
 >
