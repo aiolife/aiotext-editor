@@ -74,6 +74,111 @@
 
 ---
 
+## v0.7 — 2026-10-18
+
+### 主要变更：批处理 18px 留白 / 字数统计多维度 / 不可见字符开关搬家并默认勾选
+
+用户实测续提 3 条，随后又追加 1 条（共 4 条）：
+
+1. 批处理对话框**四周要留 18px 空白**；
+2. 字数统计要给出**多维度**（汉字、中文标点、字母、单词、英文标点、数字、数字组、三种字符数口径、段落数、非空行数、字节数）；
+3. 不可见字符三开关搬到 **选项 → 编辑器** 里，**默认勾选**；
+4. 状态栏右侧的计数改成 **汉字 / 单词数 / 字节数**（原来是「N 字符（M 码元）」）。
+
+#### 1. 批处理面板：四边 18px 留白
+
+18px 统一加在面板外层（`padding: 18px`），header / `.batch-section` / footer 的**横向** padding 归零——
+否则会和原来的 `16px` 叠成 `34px`。全局 `* { box-sizing: border-box }` 保证面板总宽仍是 760px（内容区收窄），
+横向 Guardrail：`px: 18 18 18 18`。
+
+#### 2. 字数统计：13 项多维度
+
+新增维度（口径在 `src/shared/textStats.ts`，单测锁定）：
+
+| 维度 | 口径 |
+|------|------|
+| 中文字数（汉字） | CJK 主区 + 扩展区 + 兼容表意文字，`々` `〇` 也算 |
+| 中文标点 | `、` `。` `「」` `【】` `……` `——` 及全角形标点（不含全角空格 `U+3000`） |
+| 字母个数 | 所有 Unicode 字母；汉字不计入（否则 `\p{L}` 会把汉字当字母） |
+| 单词个数 | 连续字母/数字为一词（可含 `'` `-`）；**汉字不算词** |
+| 英文标点 | ASCII 标点 |
+| 数字个数 / 数字组 | 十进制数字符个数 / 连续数字为一组的组数 |
+| 段落数 / 非空行数 | **两个口径分列**：段落 = 空行分隔的连续非空行块；非空行数 = trim 后非空的行数 |
+
+> 「段落数」与「非空行数」不再同义：统计描述的是**当前文本**（`甲\n乙` 是 1 段 2 个非空行），
+> 而「段间空一行」**工具**把每个非空行当作一段（它会给它们插空行）——两者用途不同，
+> 对话框里在各自的 hint 里写清楚了。
+
+#### 4. 状态栏计数：汉字 / 单词 / 字节
+
+状态栏右端原来显示 `1234 字符（1234 码元）`——码元（UTF-16 code unit）是给调试看的，
+用户扫一眼真正关心的是**写了多少汉字、多少个词、多少字节**。现改为：
+
+```
+汉字 42 · 单词 3 · 128 字节
+```
+
+用的是**同一个 `countTextStats`**（和「视图 → 字数统计」一致），所以两处数字永远对得上；
+tooltip 里重复一遍并补上「UTF-8」。状态栏只放这三项，13 项完整统计仍在字数统计对话框里。
+
+#### 3. 不可见字符三开关：移入「选项 → 编辑器」并默认勾选
+
+视图菜单里的三个勾选项撤掉，改成 `SettingsDialog` 编辑器页的三个 `Row`（`appearance.showSpaces` /
+`showLineEnds` / `showParagraphMarks`），**默认全勾**（后端 `Appearance::default()` 同步改 true，
+Rust 单测 `defaults_match_spec` 加了断言）。命令 `view.toggleSpaces` 等三个仍保留在注册表里，
+想在菜单外切换可以去「自定义快捷键」给它们绑键。
+
+### 改动的文档
+
+| 文档 | 变更 |
+|------|------|
+| `PRD.md` | §3.5 视图菜单行：撤掉三个勾选项，注明开关在「选项 → 编辑器」 |
+| `04-ui-ux.md` | §2.3 重写：统计多维度口径表 + 不可见字符开关的新位置与默认值 |
+| `CHANGELOG.md` | 本条目 |
+
+### 代码实现
+
+| 文件 | 变更 |
+|------|------|
+| `src/shared/textStats.ts` | `TextStats` 扩到 13 项；新增汉字 / 中文标点 / 单词 / 数字组分类（`isHan`、`isChinesePunct`、`countRuns`）；`paragraphs` 改为「空行分隔的块」，另加 `nonEmptyLines` |
+| `src/shared/textStats.test.ts` | 新增 4 个用例（混排归类、连字符断词、代理对汉字、两种段落口径） |
+| `src/App.tsx` | `handleDocStats` 输出 13 项并两列显示；`handleParagraphCount` 加「非空行数」；`StatCtx` 增 `columns` |
+| `src/components/StatDialog.tsx` | 新增 `columns?: 1 \| 2` 与 `.dialog-wide` |
+| `src/components/SettingsDialog.tsx` | 编辑器页新增三个 `Row`（显示空格 / 行尾 / 换段符） |
+| `src/components/MenuBar.tsx`、`src/App.tsx` | 视图菜单撤掉三个勾选项与 `invisible` props（开关改在设置里） |
+| `src-tauri/src/core/settings.rs` | `Appearance::default()` 三开关改 `true`；单测断言改为「默认勾选」 |
+| `src/store/settingsStore.ts` | 前端默认值同步为 `true` |
+| `src/styles/global.css` | `.batch-dialog.batch-dialog-textpro { padding: 18px }` + header/section/footer 横向 padding 归零；`.doc-stats-2col`、`.dialog-wide` |
+| `src/components/StatusBar.tsx` | 右侧计数由 `countChars`（码点 / 码元）换成 `countTextStats` 的 `汉字 N · 单词 M · B 字节`，tooltip 补「UTF-8」 |
+| `scripts/smoke.mjs` | 断言改为：视图菜单 4 个勾选项且不含三个开关、**默认勾选下**符号就画出来、选项 → 编辑器三个开关默认勾选、字数统计 ≥13 项且关键维度在位、状态栏显示 `汉字 N · 单词 M · B 字节`、批处理 `padding: 18 18 18 18` |
+
+### 决策
+
+1. **18px 加外层、内层横向归零**：直接给 header/section/footer 各加 18px 会不一致（它们原本 16px / 12px），也会和外层叠成 34px。
+2. **段落数与非空行数分列**：用户点名要这两项并列，说明预期两个数不同；若沿用「段落 = 非空行」就会显示两个一样的数字。
+3. **单词不含汉字**：`\p{L}` 会把 `汉字` 判成字母，不排除的话 `汉字，abc` 会被数成 2 个词。
+4. **三个命令保留不删**：虽然菜单里没了，`view.toggleSpaces` 等仍在注册表，用户可在「自定义快捷键」里绑回去（删掉会让既有绑定失效）。
+
+### 验证
+
+`cargo test` **237 全过**（含「默认勾选」断言）；`npm run test` **155/155**（统计用例 13 个）；`npm run build` 通过；`eslint src` **0 问题**；`npm run smoke` **25/25**。
+
+关键几条实测输出（都在这个新打的 exe 上跑的）：
+
+```
+✓ 视图菜单：3 个统计项在位，不可见字符开关已移走      [4 个勾选项 · 缺失：无 · 残留开关：无]
+✓ 不可见字符默认勾选：空格 / 行尾 / 换段符都画出来    [空格 64 个 · 行尾 3 个 · 换段 2 个]
+✓ 选项 → 编辑器：三个不可见字符开关在位且默认勾选    [空格=true 行尾=true 换段=true]
+✓ 字数统计：多维度（14 行，含汉字 / 标点 / 单词 / 数字组 / 段落 / 字节）
+✓ 状态栏：计数改为 汉字 / 单词 / 字节                [汉字 408 · 单词 50 · 1644 字节]
+✓ 批处理面板：白底黑字 + 外包框 + 四边 18px 留白     [rgb(255,255,255) / rgb(0,0,0) / padding=18px 18px 18px 18px]
+```
+
+「批处理 padding」这条是 `getComputedStyle` 的实测值；「默认勾选」这条则是 CDP 灌入 `a b\nc`
+后直接数 `.cm-invisible-space` / `.cm-invisible-line-end` / `.cm-invisible-paragraph`。
+
+---
+
 ## v0.5 — 2026-10-18
 
 ### 主要变更：修保存 + 补齐编码能力 + 两处菜单扩展 + 批处理重排

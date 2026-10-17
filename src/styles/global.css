@@ -629,6 +629,31 @@ body,
   max-width: 380px;
 }
 
+/* 统计对话框两列排（字数统计十几项，一列会高出屏幕） */
+.dialog-wide {
+  max-width: 520px;
+}
+
+/* ---------- 批处理：面板四周留 18px 空白（v0.6 #1） ---------- */
+
+/* 18px 统一加在外层；header / section / footer 的**横向** padding 归零，
+   否则会和外层叠成 16+18=34px（上下同理只保留它们之间的间隔）。 */
+.batch-dialog.batch-dialog-textpro {
+  padding: 18px;
+}
+
+.batch-dialog-textpro header.dialog-header {
+  padding: 0 0 10px;
+}
+
+.batch-dialog-textpro .batch-section {
+  padding: 12px 0;
+}
+
+.batch-dialog-textpro footer.dialog-footer {
+  padding: 10px 0 0;
+}
+
 .batch-files-head {
   display: flex;
   align-items: center;

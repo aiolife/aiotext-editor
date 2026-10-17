@@ -37,10 +37,10 @@ export const DEFAULT_SETTINGS: Settings = {
     showLineNumber: true,
     showToolbar: true,
     showStatusBar: true,
-    // 不可见字符默认不显示（与后端 `Appearance::default()` 一致）
-    showSpaces: false,
-    showLineEnds: false,
-    showParagraphMarks: false,
+    // 不可见字符默认勾选（与后端 `Appearance::default()` 一致；开关在「选项 → 编辑器」里）
+    showSpaces: true,
+    showLineEnds: true,
+    showParagraphMarks: true,
     theme: 'system',
   },
   editor: {

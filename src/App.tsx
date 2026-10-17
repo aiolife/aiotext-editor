@@ -175,6 +175,8 @@ interface StatCtx {
   subtitle?: string;
   rows: { label: string; value: string | number; hint?: string }[];
   note?: string;
+  /** 两列排（`字数统计` 十几项，一列会超过屏幕高） */
+  columns?: 1 | 2;
 }
 
 /** 关闭确认对话框的等待上下文（PRD v0.3 §3.4） */
@@ -751,16 +753,21 @@ export default function App() {
       subtitle: selected
         ? `全文统计；当前选区 ${snippet(selected)} 额外单列`
         : '全文统计（未选中文字）',
+      columns: 2,
       rows: [
-        {
-          label: '字数（不计空格与控制符）',
-          value: stats.chars,
-          hint: '代理对算 1 个字符',
-        },
-        { label: '字符数（含空格）', value: stats.charsWithSpace },
-        { label: '字符数（含空格与控制符）', value: stats.charsAll },
-        { label: '行数', value: stats.lines },
-        { label: '段落数', value: stats.paragraphs, hint: '非空行数' },
+        { label: '中文字数（汉字）', value: stats.chineseChars, hint: '含扩展区，々〇 也算' },
+        { label: '中文标点', value: stats.chinesePunct, hint: '、。「」【】……—— 等' },
+        { label: '字母个数', value: stats.letters, hint: '拉丁 / 假名 / 谚文等 Unicode 字母' },
+        { label: '单词个数', value: stats.words, hint: '连续字母数字为一词，汉字不计词' },
+        { label: '英文标点', value: stats.englishPunct, hint: 'ASCII 标点' },
+        { label: '数字个数', value: stats.digits, hint: '十进制数字符，含全角 ０-９' },
+        { label: '数字组', value: stats.numberGroups, hint: '连续数字算一组' },
+        { label: '字符数（不计空格与控制符）', value: stats.chars, hint: '代理对算 1 个字符' },
+        { label: '字符数（含空格）', value: stats.charsWithSpace, hint: '控制符仍不计' },
+        { label: '字符数（含空格与控制符）', value: stats.charsAll, hint: '全部码点' },
+        { label: '段落数', value: stats.paragraphs, hint: '空行分隔的连续非空行块' },
+        { label: '非空行数', value: stats.nonEmptyLines, hint: 'trim 后非空（段间空一行工具的口径）' },
+        { label: '行数', value: stats.lines, hint: '含空行' },
         { label: '字节数（UTF-8）', value: stats.bytes },
         // 有选区时顺便给出选区字数，省得为了看一段话先剪切一遍
         ...(selected
@@ -772,7 +779,7 @@ export default function App() {
             ]
           : []),
       ],
-      note: '「字数」不计空格、全角空格、制表符、换行等，也不计控制符。',
+      note: '字符数一律不含代理对重复计数（`𩅯` 算 1 个）；空格、全角空格、制表符、换行与控制符不计入「不计空格」那一栏。',
     });
   }, [activeTab, selectionRange]);
 
@@ -804,11 +811,12 @@ export default function App() {
     const stats = countTextStats(activeTab.content);
     setStatCtx({
       title: '段落数',
-      subtitle: '段落 = 一个非空行（与「段间空一行」工具同口径）',
+      subtitle: '段落 = 空行分隔的连续非空行块',
       rows: [
-        { label: '段落数', value: stats.paragraphs, hint: '非空行数' },
+        { label: '段落数', value: stats.paragraphs, hint: '空行分隔的块' },
+        { label: '非空行数', value: stats.nonEmptyLines, hint: '段间空一行工具的口径' },
         { label: '行数', value: stats.lines },
-        { label: '空行数', value: Math.max(0, stats.lines - stats.paragraphs) },
+        { label: '空行数', value: Math.max(0, stats.lines - stats.nonEmptyLines) },
         { label: '全文字符数', value: stats.charsAll },
       ],
     });
@@ -1329,11 +1337,6 @@ export default function App() {
             tables={replaceTables}
             hasActiveTab={activeTab !== null}
             hasFilePath={activeTab?.filePath != null}
-            invisible={{
-              spaces: appearance.showSpaces,
-              lineEnds: appearance.showLineEnds,
-              paragraphMarks: appearance.showParagraphMarks,
-            }}
             actions={{
               convert: handleConvertPick,
               convertDialog: () => handleOpenConvertDialog(),

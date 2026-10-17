@@ -29,10 +29,31 @@ describe('countTextStats', () => {
     expect(stats.charsWithSpace).toBe(4);
   });
 
-  it('段落数 = 非空行数（与「段间空一行」工具同口径）', () => {
+  it('段落数 = 空行分隔的块；非空行数是另一口径', () => {
+    // 「甲\n乙」没有空行隔开 → 1 段（2 个非空行）；空行后的「丙」是第 2 段
     const stats = countTextStats('甲\n乙\n\n丙\n');
     expect(stats.lines).toBe(5);
-    expect(stats.paragraphs).toBe(3);
+    expect(stats.nonEmptyLines).toBe(3);
+    expect(stats.paragraphs).toBe(2);
+  });
+
+  it('中英混排：汉字 / 中文标点 / 字母 / 单词 / 数字 / 数字组 / 英文标点各归各位', () => {
+    const stats = countTextStats('汉字，abc 12.5。');
+    expect(stats.chineseChars).toBe(2);
+    expect(stats.chinesePunct).toBe(2); // ，。
+    expect(stats.letters).toBe(3); // abc
+    expect(stats.digits).toBe(3); // 1 2 5
+    expect(stats.numberGroups).toBe(2); // "12" 与 "5" 两组
+    expect(stats.words).toBe(3); // abc、12、5（小数点把 12.5 断成两串）
+    expect(stats.englishPunct).toBe(1); // 小数点
+  });
+
+  it('单词里的连字符与撇号不断词', () => {
+    expect(countTextStats("well-known can't").words).toBe(2);
+  });
+
+  it('代理对汉字也按一个字计', () => {
+    expect(countTextStats('\u{20000}').chineseChars).toBe(1);
   });
 
   it('CRLF 与 LF 行数一致', () => {

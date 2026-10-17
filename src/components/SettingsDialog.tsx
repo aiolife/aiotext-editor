@@ -324,6 +324,40 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   onChange={(e) => update({ editor: { ...settings.editor, wrap: e.target.checked } })}
                 />
               </Row>
+              {/* 不可见字符：校对用。画出来的是 decoration（提示符号），不进文档 */}
+              <Row label="显示空格字符" hint="空格画 ·，制表符画 →">
+                <input
+                  type="checkbox"
+                  checked={settings.appearance.showSpaces}
+                  onChange={(e) =>
+                    update({
+                      appearance: { ...settings.appearance, showSpaces: e.target.checked },
+                    })
+                  }
+                />
+              </Row>
+              <Row label="显示行尾字符" hint="有换行的行尾画 ¬">
+                <input
+                  type="checkbox"
+                  checked={settings.appearance.showLineEnds}
+                  onChange={(e) =>
+                    update({
+                      appearance: { ...settings.appearance, showLineEnds: e.target.checked },
+                    })
+                  }
+                />
+              </Row>
+              <Row label="显示换段符" hint="段落的最后一行画 ¶（优先于行尾符）">
+                <input
+                  type="checkbox"
+                  checked={settings.appearance.showParagraphMarks}
+                  onChange={(e) =>
+                    update({
+                      appearance: { ...settings.appearance, showParagraphMarks: e.target.checked },
+                    })
+                  }
+                />
+              </Row>
               <Row label="默认编码" hint="打开无 BOM 文件时的探测偏好、另存为的初值">
                 <select
                   value={settings.editor.defaultEncoding}

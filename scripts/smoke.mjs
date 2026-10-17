@@ -407,8 +407,8 @@ try {
     });
     if (batch.exceptionDetails) throw new Error(`批处理求值异常：${batch.exceptionDetails.text}`);
     const batchUi = batch.result.value;
-    // v0.6：视图菜单 6 个新增项（3 个不可见字符开关 + 3 个统计）、编辑菜单
-    // 头部 3 项（撤销 / 重做 / 跳转）、批处理面板白底黑字
+    // v0.6：视图菜单的统计项、编辑菜单头部（撤销 / 重做 / 跳转）、
+    // 批处理面板白底黑字 + 四周 18px 留白
     const v06 = await cdp.send('Runtime.evaluate', {
       expression: `(async () => {
         const tick = (ms = 80) => new Promise((r) => setTimeout(r, ms));
@@ -452,6 +452,7 @@ try {
                 bg: cs.backgroundColor,
                 color: cs.color,
                 border: cs.borderTopWidth,
+                pad: [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' '),
               };
               const exit = [...dlg.querySelectorAll('button')].find((e) => e.textContent.trim() === '退出');
               if (exit) exit.click();
@@ -466,61 +467,97 @@ try {
     });
     if (v06.exceptionDetails) throw new Error(`v0.6 求值异常：${v06.exceptionDetails.text}`);
     const novitates = v06.result.value;
-    const viewWanted = [
-      '显示空格字符',
-      '显示行尾字符',
-      '显示换段符',
-      '字数统计',
-      '统计选定文字出现的次数',
-      '显示段落数',
-    ];
+    const viewWanted = ['字数统计', '统计选定文字出现的次数', '显示段落数'];
+    // 三个不可见字符开关已按要求搬去「选项 → 编辑器」，视图菜单里不该再有
+    const movedAway = ['显示空格字符', '显示行尾字符', '显示换段符'];
     check(
-      '视图菜单：3 个不可见字符开关 + 3 个统计项',
+      '视图菜单：3 个统计项在位，不可见字符开关已移走',
       viewWanted.every((label) => novitates?.viewItems?.includes(label)) &&
-        novitates?.viewChecks === 7,
-      `${novitates?.viewChecks} 个勾选项 · 缺失：${viewWanted.filter((l) => !novitates?.viewItems?.includes(l)).join('/') || '无'}`,
+        movedAway.every((label) => !novitates?.viewItems?.includes(label)) &&
+        novitates?.viewChecks === 4,
+      `${novitates?.viewChecks} 个勾选项 · 缺失：${viewWanted.filter((l) => !novitates?.viewItems?.includes(l)).join('/') || '无'} · 残留开关：${movedAway.filter((l) => novitates?.viewItems?.includes(l)).join('/') || '无'}`,
     );
-    // 不可见字符真的会画出来：往正文里插一个空格，勾「显示空格字符」后数 `.cm-invisible-space`
+    // 不可见字符开关默认勾选（已搬进「选项 → 编辑器」），插文本后应立刻画出符号
     await cdp.send('Input.insertText', { text: 'a b\nc' });
     const inv = await cdp.send('Runtime.evaluate', {
       expression: `(async () => {
         const tick = (ms = 150) => new Promise((r) => setTimeout(r, ms));
-        const content = document.querySelector('.cm-content');
-        if (!content) return { ok: false, reason: '没有编辑器' };
-        content.focus();
-        await tick();
-        const openView = async () => {
+        const openPanel = async (label) => {
           const t = [...document.querySelectorAll('header .menubar-trigger')].find(
-            (e) => e.textContent.trim() === '视图',
+            (e) => e.textContent.trim() === label,
           );
           if (!t) return null;
           t.click();
           await tick();
           return { t, panel: t.parentElement.querySelector('.menu-panel') };
         };
-        const before = document.querySelectorAll('.cm-invisible-space').length;
-        const view = await openView();
-        const item =
-          view &&
-          [...view.panel.querySelectorAll('.menu-item')].find((e) =>
-            e.textContent.includes('显示空格字符'),
+        const clickItem = (panelRef, text) => {
+          const item = [...panelRef.panel.querySelectorAll('.menu-item')].find((e) =>
+            e.textContent.includes(text),
           );
-        if (item) item.click();
+          if (item) item.click();
+          return !!item;
+        };
+        const closeBtn = async (scope, text) => {
+          const btn = [...document.querySelectorAll(scope)].find((e) => e.textContent.trim() === text);
+          if (btn) btn.click();
+          await tick(250);
+        };
+
+        const content = document.querySelector('.cm-content');
+        if (!content) return { ok: false, reason: '没有编辑器' };
+        content.focus();
         await tick(300);
-        const after = document.querySelectorAll('.cm-invisible-space').length;
-        // 关回去：勾选项是持久化的，别把用户的默认值改了
-        if (item) {
-          const again = await openView();
-          const off =
-            again &&
-            [...again.panel.querySelectorAll('.menu-item')].find((e) =>
-              e.textContent.includes('显示空格字符'),
-            );
-          if (off) off.click();
-          await tick(200);
-          if (again) again.t.click();
+        const count = (sel) => document.querySelectorAll(sel).length;
+        const invisible = {
+          space: count('.cm-invisible-space'),
+          lineEnd: count('.cm-invisible-line-end'),
+          paragraph: count('.cm-invisible-paragraph'),
+        };
+
+        // 选项 → 编辑器：三个开关在不在、是不是默认勾上
+        let toggles = { ok: false };
+        const v1 = await openPanel('视图');
+        if (v1 && clickItem(v1, '选项')) {
+          await tick(400);
+          const tabBtn = [...document.querySelectorAll('button')].find(
+            (e) => e.textContent.trim() === '编辑器',
+          );
+          if (tabBtn) {
+            tabBtn.click();
+            await tick(300);
+            const rows = [...document.querySelectorAll('.settings-row')];
+            const pick = (label) => {
+              const row = rows.find(
+                (r) => r.querySelector('.settings-row-label span')?.textContent.trim() === label,
+              );
+              const box = row?.querySelector('input[type=checkbox]');
+              return box ? box.checked : null;
+            };
+            toggles = {
+              ok: true,
+              spaces: pick('显示空格字符'),
+              lineEnds: pick('显示行尾字符'),
+              paragraphs: pick('显示换段符'),
+            };
+          }
+          await closeBtn('button', '关闭');
         }
-        return { ok: true, before, after };
+
+        // 视图 → 字数统计：多维度行数与关键维度标签
+        let stats = { ok: false };
+        const v2 = await openPanel('视图');
+        if (v2 && clickItem(v2, '字数统计')) {
+          await tick(400);
+          const rows = [...document.querySelectorAll('.doc-stats-row')];
+          stats = {
+            ok: true,
+            count: rows.length,
+            labels: rows.map((r) => r.querySelector('dt')?.textContent.trim() ?? ''),
+          };
+          await closeBtn('.dialog button', '关闭');
+        }
+        return { ok: true, invisible, toggles, stats };
       })()`,
       returnByValue: true,
       awaitPromise: true,
@@ -528,9 +565,62 @@ try {
     if (inv.exceptionDetails) throw new Error(`不可见字符求值异常：${inv.exceptionDetails.text}`);
     const invis = inv.result.value;
     check(
-      '视图 → 显示空格字符：正文里真的画出空格符号',
-      invis?.ok === true && invis.before === 0 && invis.after > 0,
-      invis?.ok ? `勾选前 ${invis.before} 个 → 勾选后 ${invis.after} 个` : invis?.reason,
+      '不可见字符默认勾选：空格 / 行尾 / 换段符都画出来',
+      invis?.ok === true &&
+        invis.invisible.space > 0 &&
+        invis.invisible.lineEnd + invis.invisible.paragraph > 0,
+      invis?.ok
+        ? `空格 ${invis.invisible.space} 个 · 行尾 ${invis.invisible.lineEnd} 个 · 换段 ${invis.invisible.paragraph} 个`
+        : invis?.reason,
+    );
+    check(
+      '选项 → 编辑器：三个不可见字符开关在位且默认勾选',
+      invis?.toggles?.ok === true &&
+        invis.toggles.spaces === true &&
+        invis.toggles.lineEnds === true &&
+        invis.toggles.paragraphs === true,
+      invis?.toggles?.ok
+        ? `空格=${invis.toggles.spaces} 行尾=${invis.toggles.lineEnds} 换段=${invis.toggles.paragraphs}`
+        : '没打开设置对话框',
+    );
+    const statsWanted = [
+      '中文字数（汉字）',
+      '中文标点',
+      '字母个数',
+      '单词个数',
+      '英文标点',
+      '数字个数',
+      '数字组',
+      '字符数（不计空格与控制符）',
+      '字符数（含空格）',
+      '字符数（含空格与控制符）',
+      '段落数',
+      '非空行数',
+      '字节数（UTF-8）',
+    ];
+    check(
+      '字数统计：多维度（13 项起，含汉字 / 标点 / 单词 / 数字组 / 段落 / 字节）',
+      invis?.stats?.ok === true &&
+        invis.stats.count >= 13 &&
+        statsWanted.every((label) => invis.stats.labels.some((l) => l.startsWith(label))),
+      invis?.stats?.ok
+        ? `${invis.stats.count} 行 · 缺失：${statsWanted.filter((label) => !invis.stats.labels.some((l) => l.startsWith(label))).join('/') || '无'}`
+        : '没打开字数统计',
+    );
+
+    // v0.7：状态栏右侧的计数从「N 字符（M 码元）」改成 汉字 / 单词数 / 字节数
+    const bar = await cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const el = document.querySelector('.app-statusbar .statusbar-right');
+        return el ? el.textContent.replace(/\\s+/g, ' ').trim() : null;
+      })()`,
+      returnByValue: true,
+    });
+    const barText = bar.result.value ?? '';
+    check(
+      '状态栏：计数改为 汉字 / 单词 / 字节',
+      /汉字 \d+ · 单词 \d+ · \d+ 字节/.test(barText),
+      barText || '没找到状态栏计数',
     );
 
     check(
@@ -542,12 +632,13 @@ try {
       (novitates?.editHead ?? []).join(' / '),
     );
     check(
-      '批处理面板：白底黑字 + 外包框',
+      '批处理面板：白底黑字 + 外包框 + 四边 18px 留白',
       novitates?.batchStyle?.ok === true &&
         novitates.batchStyle.bg.replace(/\s/g, '') === 'rgb(255,255,255)' &&
-        novitates.batchStyle.color.replace(/\s/g, '') === 'rgb(0,0,0)',
+        novitates.batchStyle.color.replace(/\s/g, '') === 'rgb(0,0,0)' &&
+        novitates.batchStyle.pad.replace(/px/g, '').trim() === '18 18 18 18',
       novitates?.batchStyle?.ok
-        ? `${novitates.batchStyle.bg} / ${novitates.batchStyle.color} / border=${novitates.batchStyle.border}`
+        ? `${novitates.batchStyle.bg} / ${novitates.batchStyle.color} / border=${novitates.batchStyle.border} / padding=${novitates.batchStyle.pad}`
         : '没取到样式',
     );
 

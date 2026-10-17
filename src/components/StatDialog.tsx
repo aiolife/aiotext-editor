@@ -18,16 +18,25 @@ interface StatDialogProps {
   rows: StatRow[];
   /** 底部说明（如「已按代理对合并计数」） */
   note?: string;
+  /** 行数多时两列排（`字数统计` 有十几项，一列会长到超出屏幕） */
+  columns?: 1 | 2;
   onClose: () => void;
 }
 
-export function StatDialog({ title, subtitle, rows, note, onClose }: StatDialogProps) {
+export function StatDialog({
+  title,
+  subtitle,
+  rows,
+  note,
+  columns = 1,
+  onClose,
+}: StatDialogProps) {
   return (
     <div className="dialog-overlay" role="presentation">
-      <div className="dialog" role="dialog" aria-label={title}>
+      <div className="dialog dialog-wide" role="dialog" aria-label={title}>
         <h2 className="dialog-title">{title}</h2>
         {subtitle ? <p className="dialog-text">{subtitle}</p> : null}
-        <dl className="doc-stats">
+        <dl className={columns === 2 ? 'doc-stats doc-stats-2col' : 'doc-stats'}>
           {rows.map((row) => (
             <div className="doc-stats-row" key={row.label}>
               <dt>

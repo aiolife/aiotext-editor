@@ -134,10 +134,10 @@ impl Default for Appearance {
             show_line_number: true,
             show_toolbar: true,
             show_status_bar: true,
-            // 不可见字符默认关闭：校对时才勾，常态阅读不需要
-            show_spaces: false,
-            show_line_ends: false,
-            show_paragraph_marks: false,
+            // 需求（v0.6 #2）：不可见字符三开关默认**勾选**
+            show_spaces: true,
+            show_line_ends: true,
+            show_paragraph_marks: true,
             theme: Theme::System,
         }
     }
@@ -439,11 +439,11 @@ mod tests {
         assert_eq!(s.appearance.theme, Theme::System);
         assert!(s.appearance.show_toolbar && s.appearance.show_status_bar);
         assert!(s.appearance.show_line_number);
-        // 不可见字符默认关闭（校对时才开）
+        // 不可见字符默认勾选（v0.6 #2：开关在「选项 → 编辑器」里，默认开）
         assert!(
-            !s.appearance.show_spaces
-                && !s.appearance.show_line_ends
-                && !s.appearance.show_paragraph_marks
+            s.appearance.show_spaces
+                && s.appearance.show_line_ends
+                && s.appearance.show_paragraph_marks
         );
         assert_eq!(s.appearance.font_family, DEFAULT_FONT_FAMILY);
         assert_eq!(s.editor.tab_width, 4);

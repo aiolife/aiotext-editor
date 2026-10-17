@@ -46,8 +46,6 @@ export interface MenuBarProps {
   hasActiveTab: boolean;
   /** 活动标签已关联磁盘文件（重新载入 / 编码转换的前提） */
   hasFilePath: boolean;
-  /** 不可见字符的三个勾选态（视图 → 显示空格字符 / 行尾字符 / 换段符） */
-  invisible: { spaces: boolean; lineEnds: boolean; paragraphMarks: boolean };
   convertDisabled: boolean;
   toolDisabled: boolean;
   compareDisabled: boolean;
@@ -92,7 +90,6 @@ export function MenuBar({
   tables,
   hasActiveTab,
   hasFilePath,
-  invisible,
   convertDisabled,
   toolDisabled,
   compareDisabled,
@@ -388,11 +385,8 @@ export function MenuBar({
       {checkItem('view.toggleStatusBar', '状态栏', appearance.showStatusBar)}
       {checkItem('view.toggleLineNumber', '行号', appearance.showLineNumber)}
       {checkItem('view.toggleWrap', '自动换行', wrap)}
-      {/* 不可见字符：勾上后在正文里把空格 / 行尾 / 段末画出来（符号不进文档） */}
-      {checkItem('view.toggleSpaces', '显示空格字符', invisible.spaces)}
-      {checkItem('view.toggleLineEnds', '显示行尾字符', invisible.lineEnds)}
-      {checkItem('view.toggleParagraphMarks', '显示换段符', invisible.paragraphMarks)}
       <div className="menu-sep" />
+      {/* 不可见字符的三个开关已移到「选项 → 编辑器」（默认勾选），菜单里留这三个统计项 */}
       {commandItem('doc.stats')}
       {commandItem('doc.countSelected')}
       {commandItem('doc.paragraphCount')}
