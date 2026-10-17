@@ -109,6 +109,83 @@ describe('编辑与关闭', () => {
   });
 });
 
+describe('批量关闭（PRD v0.3 §3.4）', () => {
+  it('closeTabs：当前标签不在关闭名单里 → 激活标签原地不动', async () => {
+    setupInvoke();
+    const a = await useTabsStore.getState().openFile('C:/a/1.txt');
+    const b = await useTabsStore.getState().openFile('C:/a/2.txt');
+    const c = await useTabsStore.getState().openFile('C:/a/3.txt');
+    expect(useTabsStore.getState().activeTabId).toBe(c.tabId);
+    // 关掉两个「不是当前」的标签，正在编辑的那个不该被夺走焦点
+    useTabsStore.getState().closeTabs([a.tabId, b.tabId]);
+    const s = useTabsStore.getState();
+    expect(s.tabs.map((t) => t.id)).toEqual([c.tabId]);
+    expect(s.activeTabId).toBe(c.tabId);
+  });
+
+  it('closeTabs：当前标签被关 → 落到右侧最近的幸存者', async () => {
+    setupInvoke();
+    await useTabsStore.getState().openFile('C:/a/1.txt');
+    const b = await useTabsStore.getState().openFile('C:/a/2.txt');
+    const c = await useTabsStore.getState().openFile('C:/a/3.txt');
+    useTabsStore.getState().activateTab(b.tabId);
+    useTabsStore.getState().closeTabs([b.tabId]);
+    expect(useTabsStore.getState().activeTabId).toBe(c.tabId);
+  });
+
+  it('closeTabs：右侧没有幸存者 → 落到最后一个', async () => {
+    setupInvoke();
+    const a = await useTabsStore.getState().openFile('C:/a/1.txt');
+    const b = await useTabsStore.getState().openFile('C:/a/2.txt');
+    const c = await useTabsStore.getState().openFile('C:/a/3.txt');
+    useTabsStore.getState().activateTab(b.tabId);
+    // 当前标签及其右边全部关掉 → 左边最后一个
+    useTabsStore.getState().closeTabs([b.tabId, c.tabId]);
+    expect(useTabsStore.getState().activeTabId).toBe(a.tabId);
+  });
+
+  it('closeOthers：只留下指定标签', async () => {
+    setupInvoke();
+    const a = await useTabsStore.getState().openFile('C:/a/1.txt');
+    await useTabsStore.getState().openFile('C:/a/2.txt');
+    const c = await useTabsStore.getState().openFile('C:/a/3.txt');
+    useTabsStore.getState().closeOthers(c.tabId);
+    const s = useTabsStore.getState();
+    expect(s.tabs.map((t) => t.id)).toEqual([c.tabId]);
+    expect(s.activeTabId).toBe(c.tabId);
+    expect(s.tabs[0].id).not.toBe(a.tabId);
+  });
+
+  it('closeAll：全部清空，激活标签回到 null', async () => {
+    setupInvoke();
+    await useTabsStore.getState().openFile('C:/a/1.txt');
+    await useTabsStore.getState().openFile('C:/a/2.txt');
+    useTabsStore.getState().closeAll();
+    const s = useTabsStore.getState();
+    expect(s.tabs).toHaveLength(0);
+    expect(s.activeTabId).toBeNull();
+  });
+
+  it('dirty 的标签也照关（是否询问由 UI 层决定，store 不拦）', async () => {
+    setupInvoke();
+    const { tabId } = await useTabsStore.getState().openFile('C:/a/1.txt');
+    await useTabsStore.getState().openFile('C:/a/2.txt');
+    useTabsStore.getState().setContent(tabId, '改过了');
+    expect(useTabsStore.getState().tabs.find((t) => t.id === tabId)?.dirty).toBe(true);
+    useTabsStore.getState().closeTabs([tabId]);
+    expect(useTabsStore.getState().tabs.find((t) => t.id === tabId)).toBeUndefined();
+  });
+
+  it('关闭不存在的 id 不应报错也不误伤', async () => {
+    setupInvoke();
+    const { tabId } = await useTabsStore.getState().openFile('C:/a/1.txt');
+    useTabsStore.getState().closeTabs(['tab-不存在的', tabId]);
+    const s = useTabsStore.getState();
+    expect(s.tabs).toHaveLength(0);
+    expect(s.activeTabId).toBeNull();
+  });
+});
+
 describe('保存', () => {
   it('Unicode 编码直接保存，清除 dirty', async () => {
     setupInvoke();

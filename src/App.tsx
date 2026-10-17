@@ -66,6 +66,7 @@ import { TabBar } from './components/TabBar';
 import { StatusBar } from './components/StatusBar';
 import { ReloadDialog } from './components/ReloadDialog';
 import { UnmappableDialog } from './components/UnmappableDialog';
+import { ConfirmCloseDialog, type CloseDecision } from './components/ConfirmCloseDialog';
 import { ConvertMenu } from './components/ConvertMenu';
 import { ConvertDialog, type ConvertTarget } from './components/ConvertDialog';
 import { SearchPanel } from './components/SearchPanel';
@@ -158,6 +159,13 @@ interface UnmappableCtx {
   resolve: (decision: SaveDecision | null) => void;
 }
 
+/** 关闭确认对话框的等待上下文（PRD v0.3 §3.4） */
+interface CloseCtx {
+  /** 待关闭且未保存的标签快照（弹窗期间不应再跟着编辑抖动） */
+  tabs: EditorTab[];
+  resolve: (decision: CloseDecision) => void;
+}
+
 /** 保存前预检结论 */
 type Precheck =
   | { kind: 'proceed'; decision: SaveDecision | null } // null = 无不可编码，直接写出
@@ -185,7 +193,7 @@ export default function App() {
   const newTab = useTabsStore((s) => s.newTab);
   const restoreSession = useTabsStore((s) => s.restoreSession);
   const activateTab = useTabsStore((s) => s.activateTab);
-  const closeTab = useTabsStore((s) => s.closeTab);
+  const closeTabs = useTabsStore((s) => s.closeTabs);
   const setContent = useTabsStore((s) => s.setContent);
   const setCursor = useTabsStore((s) => s.setCursor);
   const reloadWithEncoding = useTabsStore((s) => s.reloadWithEncoding);
@@ -195,6 +203,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [reloadTabId, setReloadTabId] = useState<string | null>(null);
   const [unmappableCtx, setUnmappableCtx] = useState<UnmappableCtx | null>(null);
+  const [closeCtx, setCloseCtx] = useState<CloseCtx | null>(null);
   const [pendingEdit, setPendingEdit] = useState<PendingEdit | null>(null);
   const [selection, setSelection] = useState<{ tabId: string; from: number; to: number } | null>(
     null,
@@ -503,27 +512,136 @@ export default function App() {
     [activeTab, doSaveAs, runGuarded],
   );
 
+  /** 保存指定标签（不看当前激活的是谁）：有路径直接存，无路径走另存为；返回是否成功 */
+  const saveTabById = useCallback(
+    async (id: string): Promise<boolean> => {
+      const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
+      if (!tab) return false;
+      return tab.filePath
+        ? await saveTab(id, (unmappable, t) => askUser(unmappable, t.encoding))
+        : await doSaveAs(id, tab.fileName);
+    },
+    [askUser, doSaveAs, saveTab],
+  );
+
+  /** 弹出关闭确认对话框并等用户决策（Promise 风格，与 `askUser` 一致） */
+  const askClose = useCallback(
+    (targets: EditorTab[]) =>
+      new Promise<CloseDecision>((resolve) => {
+        setCloseCtx({ tabs: targets, resolve });
+      }),
+    [],
+  );
+
+  /**
+   * 关闭一批标签的统一入口（PRD v0.3 §3.4 C-1 ~ C-6）。
+   *
+   * - 没改过的标签直接关，不打扰用户；
+   * - 有改动的**只问一次**（多个就汇总成一个对话框，不逐个连弹）；
+   * - `cancel`：一个都不动；
+   * - `save`：逐个保存，**只有保存成功的才关闭**——保存失败或被取消保存的标签留在原地；
+   * - `discard`：直接丢弃。标签一旦从 store 摘除，会话里就不再有它，
+   *   所以下次启动不会把它复活（§1.6 第 3 条「丢也是用户在决定」）。
+   */
+  const requestClose = useCallback(
+    async (ids: string[]) => {
+      const all = useTabsStore.getState().tabs;
+      const targets = ids
+        .map((id) => all.find((t) => t.id === id))
+        .filter((t): t is EditorTab => t !== undefined);
+      if (targets.length === 0) return;
+
+      const closable = targets.filter((t) => !t.dirty).map((t) => t.id);
+      const dirtyTabs = targets.filter((t) => t.dirty);
+
+      if (dirtyTabs.length > 0) {
+        let decision: CloseDecision;
+        try {
+          decision = await askClose(dirtyTabs);
+        } finally {
+          setCloseCtx(null);
+        }
+        if (decision === 'cancel') return;
+
+        if (decision === 'discard') {
+          closable.push(...dirtyTabs.map((t) => t.id));
+        } else {
+          const savedIds: string[] = [];
+          for (const t of dirtyTabs) {
+            try {
+              if (await saveTabById(t.id)) savedIds.push(t.id);
+            } catch (e) {
+              setError(`保存「${t.fileName}」失败：${String(e)}`);
+            }
+          }
+          closable.push(...savedIds);
+          const failed = dirtyTabs.filter((t) => !savedIds.includes(t.id));
+          if (failed.length > 0) {
+            setError(
+              `已保留 ${failed.length} 个没保存成功的文件：${failed.map((t) => t.fileName).join('、')}`,
+            );
+          }
+        }
+      }
+
+      if (closable.length > 0) closeTabs(closable);
+    },
+    [askClose, closeTabs, saveTabById],
+  );
+
+  /** 关闭单个标签（× / 中键 / 双击 / 右键菜单 / `Ctrl·Cmd + W`） */
   const handleCloseTab = useCallback(
     (id: string) => {
-      const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
-      if (!tab) return;
-      if (!tab.dirty) {
-        closeTab(id);
-        return;
-      }
-      // F-01 §1.2 关闭确认：确定 = 保存并关闭；取消 = 留在原地
-      const ok = window.confirm(
-        `「${tab.fileName}」有未保存的修改。\n\n确定：保存并关闭\n取消：不关闭`,
-      );
-      if (!ok) return;
-      runGuarded('保存并关闭', async () => {
-        const saved = tab.filePath
-          ? await saveTab(id, (unmappable, t) => askUser(unmappable, t.encoding))
-          : await doSaveAs(id, tab.fileName);
-        if (saved) closeTab(id);
-      });
+      void requestClose([id]);
     },
-    [askUser, closeTab, doSaveAs, runGuarded, saveTab],
+    [requestClose],
+  );
+
+  /** 关闭除该标签外的全部标签 */
+  const handleCloseOthers = useCallback(
+    (id: string) => {
+      void requestClose(tabs.filter((t) => t.id !== id).map((t) => t.id));
+    },
+    [requestClose, tabs],
+  );
+
+  /** 全部关闭 */
+  const handleCloseAll = useCallback(() => {
+    void requestClose(tabs.map((t) => t.id));
+  }, [requestClose, tabs]);
+
+  /** 全部保存（保存后**不关闭**任何标签） */
+  const handleSaveAll = useCallback(
+    () =>
+      runGuarded('全部保存', async () => {
+        const dirty = tabs.filter((t) => t.dirty);
+        if (dirty.length === 0) {
+          setNotice('没有需要保存的文件');
+          return;
+        }
+        let failed = 0;
+        for (const t of dirty) {
+          if (!(await saveTabById(t.id))) failed += 1;
+        }
+        if (failed > 0) setError(`${failed} 个文件未保存（可能取消了保存位置选择）`);
+        else setNotice(`已保存 ${dirty.length} 个文件`);
+      }),
+    [runGuarded, saveTabById, tabs],
+  );
+
+  /** 保存 / 另存为**指定**标签（标签右键菜单用，不一定是当前激活的那个） */
+  const handleSaveTab = useCallback(
+    (id: string) => runGuarded('保存', async () => void (await saveTabById(id))),
+    [runGuarded, saveTabById],
+  );
+
+  const handleSaveTabAs = useCallback(
+    (id: string) =>
+      runGuarded('另存为', async () => {
+        const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
+        await doSaveAs(id, tab?.fileName ?? '未命名');
+      }),
+    [doSaveAs, runGuarded],
   );
 
   // ---------------------------------------------------------------------
@@ -823,6 +941,21 @@ export default function App() {
         },
         enabled: () => activeTab !== null,
       },
+      // PRD v0.3 §3.4：标签生命周期管理
+      'file.saveAll': {
+        run: () => void handleSaveAll(),
+        enabled: () => !busy && tabs.some((t) => t.dirty),
+      },
+      'file.closeAll': {
+        run: () => void handleCloseAll(),
+        enabled: () => tabs.length > 0,
+      },
+      'file.closeOthers': {
+        run: () => {
+          if (activeTab) handleCloseOthers(activeTab.id);
+        },
+        enabled: () => tabs.length > 1 && activeTab !== null,
+      },
       // 搜索
       'search.find': {
         run: () => {
@@ -899,6 +1032,9 @@ export default function App() {
       handleSave,
       handleSaveAs,
       handleCloseTab,
+      handleSaveAll,
+      handleCloseAll,
+      handleCloseOthers,
       handleConvertPick,
       handleRunTool,
       directions.length,
@@ -913,6 +1049,8 @@ export default function App() {
       updateSettings,
       driveSearch,
       searchOpen,
+      // 「全部保存 / 全部关闭 / 关闭其他」的可用性取决于标签总数与是否有脏标签
+      tabs,
     ],
   );
 
@@ -988,6 +1126,20 @@ export default function App() {
             </button>
             <button onClick={handleSaveAs} disabled={busy || !activeTab} title="Ctrl+Shift+S">
               另存为…
+            </button>
+            <button
+              onClick={() => void handleSaveAll()}
+              disabled={busy || !tabs.some((t) => t.dirty)}
+              title="保存所有有改动的文件（Ctrl+Shift+A）；不关闭任何标签"
+            >
+              全部保存
+            </button>
+            <button
+              onClick={() => void handleCloseAll()}
+              disabled={busy || tabs.length === 0}
+              title="关闭所有标签（Ctrl+Shift+W）；有未保存内容时先询问"
+            >
+              全部关闭
             </button>
             <button
               onClick={() => activeTab && setReloadTabId(activeTab.id)}
@@ -1110,6 +1262,10 @@ export default function App() {
         activeTabId={activeTabId}
         onActivate={activateTab}
         onClose={handleCloseTab}
+        onCloseOthers={handleCloseOthers}
+        onCloseAll={handleCloseAll}
+        onSave={handleSaveTab}
+        onSaveAs={handleSaveTabAs}
       />
 
       <main className="app-main">
@@ -1223,6 +1379,16 @@ export default function App() {
           onDecide={(decision) => {
             unmappableCtx.resolve(decision);
             setUnmappableCtx(null);
+          }}
+        />
+      )}
+
+      {/* PRD v0.3 §3.4：关闭确认（保存 / 不保存 / 取消）。关闭到账由 requestClose 统一收尾 */}
+      {closeCtx && (
+        <ConfirmCloseDialog
+          tabs={closeCtx.tabs}
+          onDecide={(decision) => {
+            closeCtx.resolve(decision);
           }}
         />
       )}

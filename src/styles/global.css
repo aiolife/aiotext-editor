@@ -267,6 +267,33 @@ body,
   background: #1565c0;
 }
 
+/* 「不保存」：丢弃改动是不可逆操作，给它一个与「取消」明显不同的橙色，
+   避免用户把它和左边的普通按钮混作业式点过去 */
+.dialog-danger {
+  color: #8a4b00;
+  border-color: #d9822b;
+  background: rgba(217, 130, 43, 0.12);
+}
+
+.dialog-danger:hover:not(:disabled) {
+  background: rgba(217, 130, 43, 0.22);
+}
+
+/* 批量关闭时列出的未保存文件 */
+.dialog-list {
+  margin: 0 0 8px;
+  padding-left: 22px;
+  max-height: 168px;
+  overflow: auto;
+  line-height: 1.7;
+}
+
+.dialog-list-more {
+  color: rgba(128, 128, 128, 1);
+  list-style: none;
+  margin-left: -18px;
+}
+
 .dialog-wide {
   min-width: 620px;
   max-width: 860px;
@@ -408,6 +435,15 @@ body,
   border: 1px solid rgba(128, 128, 128, 0.4);
   border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+
+/* 标签右键菜单：坐标来自鼠标点击位置（视口坐标），故用 fixed 而非 absolute */
+.tabbar-menu {
+  position: fixed;
+  top: auto;
+  left: auto;
+  min-width: 156px;
+  z-index: 80;
 }
 
 .menu-group-title {

@@ -1,6 +1,6 @@
 # AioTextEditor
 
-跨平台中文文本编辑器 —— 面向古籍电子化整理者、内容编辑与校对人员。
+跨平台中文文本编辑器 —— 面向古籍 / 佛经电子化整理者、内容编辑与校对人员。
 
 Rust + Tauri 2 + React 19 + CodeMirror 6 + OpenCC。
 

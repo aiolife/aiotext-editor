@@ -50,6 +50,17 @@ interface TabsState {
   activateTab: (id: string) => void;
   /** 关闭标签（不做 dirty 确认，由 UI 层负责） */
   closeTab: (id: string) => void;
+  /**
+   * 批量关闭标签（PRD v0.3 §3.4）。
+   *
+   * 与 `closeTab` 一视同仁：**不做 dirty 确认**，UI 层必须先把「保存 / 不保存 /
+   * 取消」问清楚再调用，这样同一套收敛规则只有一个实现。
+   */
+  closeTabs: (ids: string[]) => void;
+  /** 关闭除 id 之外的全部标签 */
+  closeOthers: (id: string) => void;
+  /** 关闭全部标签 */
+  closeAll: () => void;
   /** 编辑器内容变更（CodeMirror change 回调） */
   setContent: (id: string, content: string) => void;
   /** 光标位置变更 */
@@ -116,6 +127,38 @@ function saveOptionsFor(tab: EditorTab, unmappable: SaveOptions['unmappable']): 
   };
 }
 
+/**
+ * 摘掉一批标签后 `activeTabId` 的收敛规则（沿用 `closeTab` 的既有语义）：
+ * 当前标签被关掉时，落到它**右侧最近的幸存者**；右侧没有了就落到最后一个。
+ * 当前标签不在被关名单里则原地不动——用户正在编辑的东西不会因为关闭别的标签而跳走。
+ */
+function nextActiveAfterClose(
+  tabs: EditorTab[],
+  removed: ReadonlySet<string>,
+  activeTabId: string | null,
+): string | null {
+  const survivors = tabs
+    .map((tab, index) => ({ tab, index }))
+    .filter(({ tab }) => !removed.has(tab.id));
+  if (survivors.length === 0) return null;
+  if (activeTabId === null) return null; // 本来就没有激活标签，不自动填一个
+  if (!removed.has(activeTabId)) return activeTabId;
+  const closedIndex = tabs.findIndex((t) => t.id === activeTabId);
+  const next = survivors.find(({ index }) => index > closedIndex) ?? survivors[survivors.length - 1];
+  return next.tab.id;
+}
+
+/** 状态 → 摘掉 `removed` 后的下一份状态（标签列表 + 收敛后的激活标签） */
+function removeTabs(
+  state: Pick<TabsState, 'tabs' | 'activeTabId'>,
+  removed: ReadonlySet<string>,
+): Pick<TabsState, 'tabs' | 'activeTabId'> {
+  return {
+    tabs: state.tabs.filter((t) => !removed.has(t.id)),
+    activeTabId: nextActiveAfterClose(state.tabs, removed, state.activeTabId),
+  };
+}
+
 export const useTabsStore = create<TabsState>((set, get) => ({
   tabs: [],
   activeTabId: null,
@@ -141,16 +184,14 @@ export const useTabsStore = create<TabsState>((set, get) => ({
 
   activateTab: (id) => set({ activeTabId: id }),
 
-  closeTab: (id) =>
-    set((s) => {
-      const tabs = s.tabs.filter((t) => t.id !== id);
-      let activeTabId = s.activeTabId;
-      if (activeTabId === id) {
-        const idx = s.tabs.findIndex((t) => t.id === id);
-        activeTabId = tabs[Math.min(idx, tabs.length - 1)]?.id ?? null;
-      }
-      return { tabs, activeTabId };
-    }),
+  closeTab: (id) => set((s) => removeTabs(s, new Set([id]))),
+
+  closeTabs: (ids) => set((s) => removeTabs(s, new Set(ids))),
+
+  closeOthers: (id) =>
+    set((s) => removeTabs(s, new Set(s.tabs.filter((t) => t.id !== id).map((t) => t.id)))),
+
+  closeAll: () => set({ tabs: [], activeTabId: null }),
 
   setContent: (id, content) =>
     set((s) => ({

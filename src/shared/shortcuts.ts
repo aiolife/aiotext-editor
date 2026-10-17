@@ -81,6 +81,11 @@ export const COMMANDS: readonly CommandMeta[] = [
     // macOS 的 ⌘W 由系统接管（见 RESERVED_KEYS），绑了也不会触发，故那边默认不绑
     defaultKey: IS_MAC ? null : mod('w'),
   },
+  // 以下三项是 PRD v0.3 §3.4 的标签生命周期管理；键位沿用 04-ui-ux §2.1 菜单表
+  // 已经承诺过的写法（它们在菜单表列了多年却一直没落地）。
+  { id: 'file.saveAll', label: '全部保存', group: '文件', defaultKey: mod('shift+a') },
+  { id: 'file.closeAll', label: '全部关闭', group: '文件', defaultKey: mod('shift+w') },
+  { id: 'file.closeOthers', label: '关闭其他标签', group: '文件', defaultKey: null },
 
   // 搜索
   { id: 'search.find', label: '查找…', group: '搜索', defaultKey: mod('f') },
