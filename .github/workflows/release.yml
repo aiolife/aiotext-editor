@@ -55,9 +55,17 @@ jobs:
           cache: npm
 
       # opencc-sys 构建链：cmake（编译 OpenCC C++ 全库）+ LLVM/libclang（bindgen 生成 FFI）
+      # opencc-sys 构建链：cmake + libclang。Linux 侧必须**先**装依赖，
+      # 下面的配置步骤才问得到 libclang 的位置（顺序反了 `LIBCLANG_PATH` 会落空）。
+      - name: 安装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libclang-dev
+
       # 同 ci.yml：Linux 不用这个 action —— 它装的 LLVM 18 依赖 libtinfo.so.5，
       # ubuntu runner 上只有 .so.6，libclang 打不开会让 opencc-sys 的 bindgen panic。
-      # Linux 改用发行版自带的 libclang（在下面的系统依赖里装）。
+      # Linux 改用发行版自带的 libclang（在上面一步装好）。
       - name: 安装 LLVM（bindgen 需要 libclang）
         if: runner.os != 'Linux'
         uses: kylemayes/install-llvm-action@v2
@@ -70,16 +78,13 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ]; then
             echo "LIBCLANG_PATH=$LLVM_PATH/bin" >> "$GITHUB_ENV"
           elif [ "$RUNNER_OS" = "Linux" ]; then
-            echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
+            libdir="$(llvm-config --libdir 2>/dev/null || true)"
+            [ -n "$libdir" ] || libdir="$(dirname "$(find /usr/lib -name 'libclang.so*' -print -quit 2>/dev/null || true)")"
+            echo "libclang 目录：$libdir"
+            echo "LIBCLANG_PATH=$libdir" >> "$GITHUB_ENV"
           else
             echo "LIBCLANG_PATH=$LLVM_PATH/lib" >> "$GITHUB_ENV"
           fi
-
-      - name: 安装 Linux 系统依赖
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libclang-dev
 
       # macOS 通用包要同时装两个架构的 std
       - uses: dtolnay/rust-toolchain@stable

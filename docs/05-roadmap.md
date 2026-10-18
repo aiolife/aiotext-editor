@@ -357,7 +357,7 @@ aiotext-editor/
 
 | 项 | 状态 | 说明 |
 |----|------|------|
-| 1 | ✅ | 三平台各一个安装文件：`tauri.windows.conf.json` → `["nsis"]`、`tauri.macos.conf.json` → `["dmg"]`、`tauri.linux.conf.json` → `["appimage"]`（基线 `targets: "all"` 在 Windows 上会同时产出 MSI + NSIS，必须逐平台显式收窄）。本机出的是 `AioTextEditor_0.1.0_x64-setup.exe`，**4.43 MiB**，`currentUser` 安装、不弹提权；macOS 通用包与 Linux AppImage 由 CI 产出 |
+| 1 | ✅ | 三平台各一个安装文件：`tauri.windows.conf.json` → `["nsis"]`、`tauri.macos.conf.json` → `["dmg"]`、`tauri.linux.conf.json` → `["appimage"]`（**v0.9 起改为 `["deb"]`**：AppImage 依赖 linuxdeploy，CI 上最容易翻车）。本机出的是 `AioTextEditor_0.1.0_x64-setup.exe`，**4.43 MiB**，`currentUser` 安装、不弹提权；macOS 通用包与 Linux AppImage 由 CI 产出 |
 | 2 | ✅ | `tests/packaging.test.ts` 20 项契约与阈值：三平台单安装文件 / 静态 CRT 两个开关 / **PE 导入表白名单**（自己解析 PE，不 grep 构建脚本）/ 版本号唯一出处 / 完全离线 / 资源与图标齐全 / 体积预算（安装包 16MB、可执行 12MB、前端产物 1.5MB）。产物存在时这些检查**实际执行**，不存在时跳过而非失败（CI 的测试阶段跑在构建之前） |
 | 3 | ✅ | `.github/workflows/release.yml`：tag `v*` 触发 Windows / macOS（`--target universal-apple-darwin`）/ Linux 三条 runner；先校验 tag 与版本号一致（版本号唯一出处是 `Cargo.toml`），出包 → Windows 冒烟 → 上传 artifacts → 创建 draft Release。另有一键 `workflow_dispatch` |
 | 4 | ✅ | `scripts/smoke.mjs`：**零依赖** CDP 客户端（Node 内置 `fetch` + 全局 `WebSocket`，不引 playwright、CI 少一步下载浏览器），启动**打包产物**并断言界面可用 + **真跑一次简繁转换**。偏差见注记 ② |
@@ -377,7 +377,7 @@ aiotext-editor/
 
 ② **冒烟测试做成了「测打包产物」而不是「dev 模式启 demo 脚本」**：dev 模式验证的是源码，而这一阶段的验收句是「装完就能用」——所以要启动**真的二进制**。脚本对 `target/release` 与安装目录两种产物都能跑（`--exe` 指定）。
 
-③ **macOS / Linux 的包无法在本机验证**：`.dmg` 需要 macOS SDK 与 `codesign`，AppImage 需要 webkit2gtk 与 linuxdeploy，Windows 上一律交叉不了。本机只验证了 Windows；另两平台等 CI 首跑。macOS 现为 ad-hoc 签名（任何 Mac 能开，浏览器下载后首次打开需右键放行），免掉这一步需要 Apple Developer 证书（年费 $99，`release.yml` 末尾备好了 Secrets 清单）。
+③ **macOS / Linux 的包无法在本机验证**：`.dmg` 需要 macOS SDK 与 `codesign`，Linux 打包需要 webkit2gtk（外加 AppImage 时期的 linuxdeploy），Windows 上一律交叉不了。本机只验证了 Windows；另两平台等 CI 首跑。macOS 现为 ad-hoc 签名（任何 Mac 能开，浏览器下载后首次打开需右键放行），免掉这一步需要 Apple Developer 证书（年费 $99，`release.yml` 末尾备好了 Secrets 清单）。
 
 ④ **静态 CRT 顺带根掉了 §10.1 的旧坑**：原先记录「Windows 需最新 VC++ 运行库，旧版 `msvcp140.dll` 会让 OpenCC 词典加载访问违例」。现在程序根本不链接 `msvcp140.dll`，坑随链接方式一起消失；技术架构 §10.1 的「运行环境要求」已从「需最新运行库」改为「**无**」。冒烟里那次真实简繁转换就是盯着这条不复发。
 

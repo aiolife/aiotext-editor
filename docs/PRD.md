@@ -292,7 +292,7 @@ v0.9 起**转换与整理分成两条菜单**：「简繁」只装简繁转换�
 
 ## 六、验收标准（v1.0）
 
-- 安装包大小：Windows < 16 MB，macOS < 12 MB，Linux AppImage < 18 MB（包含 OpenCC 静态库后上调）。
+- 安装包大小：Windows < 16 MB，macOS < 12 MB，Linux deb < 18 MB（包含 OpenCC 静态库后上调）。
 - 启动时间：冷启动 < 1.5 s（8 GB 内存 SSD）。
 - 打开 100 万字纯文本文件应不卡顿（按需启用 CodeMirror 虚拟滚动）。
 - 全部 16 个 MVP 功能 ≥ 90% 测试覆盖率（Rust 端命令）。

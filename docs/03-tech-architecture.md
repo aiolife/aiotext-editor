@@ -7,7 +7,7 @@
 ## 一、整体目标
 
 - 在保留 iml-editor-lite 的"轻量、单一 API、跨平台"前提下，把 TextPro 的全部中文处理能力搬进同一个壳层。
-- 单个安装包 < 12 MB（Win64），< 8 MB（macOS），< 14 MB（Linux AppImage）。
+- 单个安装包 < 12 MB（Win64），< 8 MB（macOS），< 14 MB（Linux deb）。
 - 所有性能敏感路径（编码、查找、正则、批处理）在 Rust 端完成。
 - 启动后 < 1.5s 显示可编辑窗。
 
@@ -284,7 +284,10 @@ npm run tauri:build     # 出包
 5. Windows 额外跑 `npm run smoke`：把刚打出来的包真启动一次（含一次真实简繁转换）。
 6. 上传 artifacts；tag 触发时创建 draft Release，三平台安装包一起挂上去。
 
-**为什么 macOS / Linux 的包必须由 CI 产出**：`.dmg` 需要 macOS SDK 与 `codesign`，AppImage 需要 webkit2gtk 与 linuxdeploy，都不可能在 Windows 上交叉生成。本机只负责 Windows 包（可本地验证）。
+**为什么 macOS / Linux 的包必须由 CI 产出**：`.dmg` 需要 macOS SDK 与 `codesign`，Linux 的 `deb` 需要 dpkg 与 webkit2gtk，都不可能在 Windows 上交叉生成。本机只负责 Windows 包（可本地验证）。
+
+> Linux 最初选的是 AppImage，v0.9 起改为 `deb`：AppImage 要额外下载 linuxdeploy 及其插件（第一版三平台发布就挂在它上面），
+> 而 deb 由 Tauri 直接产出，依赖更少，也是 Debian / Ubuntu 用户真正会用的格式。
 
 **签名**：macOS 默认 ad-hoc（`signingIdentity: "-"`），任何 Mac 都能打开，但从浏览器下载后首次打开会被 Gatekeeper 拦一次（右键「打开」放行）。要免掉这一步需要 Apple Developer 证书（年费 $99），`release.yml` 末尾注释里备好了要加的 Secrets 清单。
 
