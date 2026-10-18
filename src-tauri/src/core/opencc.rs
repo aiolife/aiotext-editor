@@ -545,7 +545,9 @@ mod tests {
         assert_eq!(Direction::all_standard().len(), 6);
         assert!(Direction::S2T.family().contains(&Direction::S2TWP));
         // 删掉的 8 种方向，引擎侧也不认（反序列化必须失败）
-        for removed in ["s2tw", "tw2s", "t2tw", "tw2t", "t2hk", "hk2t", "t2jp", "jp2t"] {
+        for removed in [
+            "s2tw", "tw2s", "t2tw", "tw2t", "t2hk", "hk2t", "t2jp", "jp2t",
+        ] {
             assert!(
                 serde_json::from_value::<Direction>(serde_json::json!(removed)).is_err(),
                 "{removed} 应已删除，却仍能被反序列化"

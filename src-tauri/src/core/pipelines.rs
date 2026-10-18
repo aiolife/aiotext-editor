@@ -1011,7 +1011,10 @@ fn insert_blank_between(text: &str) -> StepOutcome {
     }
 
     // 实质变化看「行数差」：补上的空行算插入，被合并掉的算减少
-    let blank_before = lines.iter().filter(|(content, _)| is_blank(content)).count();
+    let blank_before = lines
+        .iter()
+        .filter(|(content, _)| is_blank(content))
+        .count();
     let blank_after = body.len() - 1;
     let delta = blank_after as isize - blank_before as isize;
     let note = if delta >= 0 {
@@ -1899,8 +1902,7 @@ fn spacing_line(line: &str, o: &SpacingOptions) -> (String, usize) {
         if o.squeeze_spaces && cur == ' ' && !protected[index] {
             let prev = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
             let next = chars.get(index + 1).copied();
-            let near_punct =
-                prev.is_some_and(is_full_punct) || next.is_some_and(is_full_punct);
+            let near_punct = prev.is_some_and(is_full_punct) || next.is_some_and(is_full_punct);
             if near_punct {
                 changed += 1;
                 continue;
@@ -1908,7 +1910,8 @@ fn spacing_line(line: &str, o: &SpacingOptions) -> (String, usize) {
         }
         if index > 0 {
             let prev = chars[index - 1];
-            let need_space = prev != ' ' && cur != ' ' && !protected[index] && !protected[index - 1];
+            let need_space =
+                prev != ' ' && cur != ' ' && !protected[index] && !protected[index - 1];
             // 全角标点与英文之间不加空格（中文习惯），也避免与「标点后不留空格」互相拉锯
             let boundary = !is_full_punct(prev) && !is_full_punct(cur);
             let cjk_latin = o.cjk_latin
@@ -2139,7 +2142,9 @@ fn normalize_punctuation(text: &str, o: &PunctOptions) -> StepOutcome {
 
 /// 数字与英文单位之间补空格（100kg → 100 kg）
 fn space_digit_unit(line: &str) -> (String, usize) {
-    const UNITS: [&str; 12] = ["kg", "cm", "mm", "km", "px", "ms", "GB", "MB", "KB", "TB", "Hz", "GHz"];
+    const UNITS: [&str; 12] = [
+        "kg", "cm", "mm", "km", "px", "ms", "GB", "MB", "KB", "TB", "Hz", "GHz",
+    ];
     let lower = line.to_lowercase();
     let chars: Vec<char> = line.chars().collect();
     let lower_chars: Vec<char> = lower.chars().collect();
@@ -2335,7 +2340,12 @@ fn snippet_process(text: &str, o: &SnippetOptions) -> StepOutcome {
     }
     if o.remove_half_width {
         apply!(
-            remove_half_width(&current, &HalfWidthOptions { mode: o.half_width_mode }),
+            remove_half_width(
+                &current,
+                &HalfWidthOptions {
+                    mode: o.half_width_mode
+                }
+            ),
             "删除半角"
         );
     }
@@ -2478,7 +2488,10 @@ mod tests {
         assert_eq!(by_id("normalize_punctuation", "等等..."), "等等……");
         assert_eq!(by_id("normalize_punctuation", "他--走了"), "他——走了");
         // 英文句子里的半角标点不动
-        assert_eq!(by_id("normalize_punctuation", "hello, world"), "hello, world");
+        assert_eq!(
+            by_id("normalize_punctuation", "hello, world"),
+            "hello, world"
+        );
         // 竖排符号横转
         assert_eq!(by_id("normalize_punctuation", "甲︐乙"), "甲，乙");
     }
@@ -2502,7 +2515,10 @@ mod tests {
         );
         assert_eq!(no_indent, "中文 abc 混合");
         // 段首缩进（全角空格 ×2）+ 中数之间补空格
-        assert_eq!(by_id("web_novel_layout", "第1章"), "\u{3000}\u{3000}第 1 章");
+        assert_eq!(
+            by_id("web_novel_layout", "第1章"),
+            "\u{3000}\u{3000}第 1 章"
+        );
     }
 
     #[test]
@@ -2568,10 +2584,7 @@ mod tests {
             sort: true,
             ..SnippetOptions::default()
         };
-        assert_eq!(
-            run(PipelineStep::SnippetProcess(opts), "b\na\nb"),
-            "a\nb"
-        );
+        assert_eq!(run(PipelineStep::SnippetProcess(opts), "b\na\nb"), "a\nb");
     }
 
     #[test]

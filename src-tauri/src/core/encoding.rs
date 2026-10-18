@@ -318,7 +318,9 @@ pub fn encode(text: &str, encoding: Encoding) -> (Vec<u8>, bool) {
         }
         Encoding::Cp437 => cp437::encode(text),
         _ => {
-            let decoder = encoding.decoder().expect("除 CP437 外都有 encoding_rs 解码器");
+            let decoder = encoding
+                .decoder()
+                .expect("除 CP437 外都有 encoding_rs 解码器");
             let (cow, _used_encoding, had_errors) = decoder.encode(text);
             (cow.into_owned(), had_errors)
         }
