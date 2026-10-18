@@ -1224,10 +1224,52 @@ BIG5 保存回退链：OpenCC 异体字词典 → `u2b1.tsv` → `u2b2.tsv`（�
 
 ### 待后续阶段
 
-- **CI 首跑**：macOS 通用包与 Linux AppImage 尚未在真实 runner 上验证过（尤其 macOS 通用包要同时编两个架构的 OpenCC）。
+- ~~**CI 首跑**：macOS 通用包与 Linux AppImage 尚未在真实 runner 上验证过~~ —— **已在 v0.9.0 发布时兑现**：macOS 通用包 6.85 MB 出包成功，Linux 改为 deb 后 4.00 MB 也出包成功（见开发日志 011）。
 - 若拿到 Apple Developer 证书：接上签名与公证，去掉首次打开的右键放行步骤。
 - F-11 §11.3 自定义工具栏（v1.1）、打印、自动分段（v1.1）。
 - 会话的边界行为（关掉全部标签后是否顺带清空会话）可按使用反馈细化。
+
+---
+
+## 开发日志 011 — 2026-10-19（v0.9.0 发布：三平台出包 + CI 修绿，全部完成）
+
+### 已交付
+
+| 主题 | 内容 |
+|------|------|
+| **Linux 安装包 AppImage → deb** | `tauri.linux.conf.json` 的 `bundle.targets` → `["deb"]`，`release.yml` 的 Linux artifact → `bundle/deb/*.deb`，`tests/packaging.test.ts` 的 Linux 断言同步（这条不改会让**三平台**的前端单测一起红）。deb 由 Tauri 直接产出；AppImage 要额外下载 linuxdeploy 及其插件，首版三平台发布就挂在它上面 |
+| **CI 三平台修绿 6/6** | 前端（lint + test + build）与 Rust（fmt + check + test）在 windows / macos / ubuntu 上全部通过 |
+| **CI 诊断层** | 日志正文要登录 GitHub 才看得到、接口也要 token。故在失败步骤后把关键错误行写成 `::error::` **annotation**（公开可读）。这一层是下面三个真因能被定位的前提 |
+| **macOS 键位测试去平台耦合** | `mod()` 拼出的键位按 `MODIFIER_ORDER`（ctrl→alt→shift→meta）排好；`shortcuts.test.ts` 不再写死 `ctrl+n` / `ctrl+s`，改从注册表取当前平台的默认键 |
+| **merge 测试按平台分隔符构造** | `Path::file_name()` 的分隔符是平台相关的，测试里写死的 `C:\dir\1_2.txt` 在 Linux / macOS 上必然红。改用 `std::path::MAIN_SEPARATOR` 现场构造 |
+| **Windows 冒烟从 CI 移除** | GitHub Runner 没有交互式桌面会话，WebView2 建不了窗 —— 那条检查在 CI 上**不可能通过**（本机正常通过）。脚本 `scripts/smoke.mjs` 保留，验证产物这件事回到有桌面的机器上 |
+| **Actions 升级到 Node 24 运行时** | `checkout` v4→v7、`setup-node` v4→v7、`upload-artifact` v4→v7、`download-artifact` v4→v8、`softprops/action-gh-release` v2→v3（v3 的变更只有「runtime 从 Node 20 迁到 Node 24」，无 input 破坏） |
+| **文档同步** | README 新增「获取安装包」一节（三个包 + `dpkg -i` 装法）；README / PRD / `03-tech-architecture` / `05-roadmap` 里的 AppImage 表述同步为 deb，并记下改格式的理由 |
+
+### 验证（真实运行，非仅单测）
+
+- **Release workflow 三平台出包**（tag `v0.9.0` → `436db8a`）：`AioTextEditor_0.9.0_x64-setup.exe` **4.45 MB**、`.dmg`（Intel + Apple Silicon 通用）**6.85 MB**、`.deb` **4.00 MB**；三个 job 与「发布」job 全部 success，draft Release 已生成。
+- **deb 在真实 Linux 上装过**：WSL Debian 13 里本地构建（4.06 MB）→ `dpkg -i` 装上 → `ldd` 无缺失动态库 → 二进制真的启动到 WebView 初始化（无显示器，故只见 `MESA-EGL` 提示）→ 随包 `data/legacy`（fc1/fc2）与 `data/builtin-tables` 齐全。
+- **本机**：前端 `vitest` 156/156、Rust 单测 249、`cargo fmt` / `tsc -b` / `eslint` 全干净。
+- **macOS 路径的验证方式**：本机是 Windows，故临时把 `IS_MAC` 写成 `true` 跑一遍前端单测再还原 —— 真实 macOS 上 `isMacPlatform()` 与模块判断一致，那条假失败不是缺陷。
+
+### 关键决策与发现
+
+1. **「看不到日志」要先解决，否则只能猜**。GitHub Actions 的日志正文要登录才看得到，API 取日志也要 token，而 annotation 是公开可读的 —— 给 `ci.yml` / `release.yml` 加诊断层之后，三个真因一次跑完就全浮出来了。**修 CI 之前先修「能不能看见」**，这是这轮最重要的一条。
+2. **LLVM 18 的 libclang 依赖 `libtinfo.so.5`，ubuntu runner 上只有 `.so.6`** → libclang 打不开 → `opencc-sys` 的 bindgen panic。故 Linux 不用 `kylemayes/install-llvm-action`，改发行版自带的 `libclang-dev`（`llvm-config` 不存在时用 `find` 兜底）。
+3. **装依赖与配变量有先后**：`libclang-dev` 必须先装，下面「配置 `LIBCLANG_PATH`」才问得到位置。顺序反了变量会落空，bindgen 报 `invalid: []`（连试都没意义的路径）。
+4. **写死平台的东西只会在别的平台上红**：Windows 路径分隔符（发现 2）、`ctrl+n`/`ctrl+s` 默认键（发现 3）都是同一类。测试要断言行为，就别把平台相关的常量抄进期望值。
+5. **键位必须是规范形式**。`MODIFIER_ORDER` 里 `meta` 排在 `shift` 之后，所以 macOS 上是 `shift+meta+s` 而不是 `meta+shift+s`。注册表里若出现「写得出来却解析不回自身」的键位，自定义覆盖会静默失效 —— 现在由 `mod()` 统一排序。
+6. **改打包格式会牵动打包契约测试**。改 deb 之后三平台前端单测全红，就是 `packaging.test.ts` 那条断言 —— 这是我自己引入的 regression，本地 `npm test` 一眼抓到。**格式类的改动不存在「只影响一个平台」**。
+7. **产物落在项目根目录的 `target/release/bundle/deb/`**，不是 `src-tauri/target/`（Windows 的 NSIS 同理）。`release.yml` 的 artifact 路径按此写。
+8. **Windows 冒烟在 CI 上必然失败**，且它排在 artifact 上传之前 —— 一失败会把上传判成 skipped，变成「包明明打出来了却没传上去」。先加 `continue-on-error` 兜住，最终移除。
+
+### 待后续阶段
+
+- **v0.9.0 的 draft Release 待 Publish**（草稿状态下对外不可见，`releases/latest` 取不到）。
+- `upload-artifact` v7 / `download-artifact` v8 / `gh-release` v3 只在 tag 发版时才真正执行 —— 本次 CI 跑不到它们，v0.9.1 首跑时留意一眼「发布」job。
+- 若拿到 Apple Developer 证书：接上签名与公证，去掉首次打开的右键放行步骤（Secrets 清单已写在 `release.yml` 末尾注释里）。
+- F-11 §11.3 自定义工具栏（v1.1）、打印、自动分段（v1.1）。
 
 ---
 
