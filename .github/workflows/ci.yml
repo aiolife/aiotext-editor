@@ -16,9 +16,9 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -57,13 +57,13 @@ jobs:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # tauri::generate_context! 在**编译期**就要读 frontendDist（../dist）。
       # 前端 job 与 Rust job 跑在各自独立的 runner 上，这里不先构建前端，
       # `cargo check` 会直接报「frontendDist 指向的路径不存在」——
       # 之前这条一直被「格式检查」挡在前面，没暴露出来。
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
