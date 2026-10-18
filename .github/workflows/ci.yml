@@ -29,8 +29,22 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # 下面三步都用 `tee` 留底 + 失败时把关键行写成 annotation：
+      # 日志正文要登录 GitHub 才看得到（接口也要 token），而 annotation 是公开可读的。
+      # 每个 step 只有 10 条 annotation 的额度，所以只挑最有信息量的那几行。
       - name: 单元测试
-        run: npm test
+        id: unit
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee unit.log
+
+      - name: 诊断：单测失败原因
+        if: failure() && steps.unit.outcome == 'failure'
+        shell: bash
+        run: |
+          grep -aE '✕|FAIL|AssertionError|Error:' unit.log | head -8 | while read -r l; do echo "::error::$l"; done
+          tail -2 unit.log | while read -r l; do echo "::error::[末尾] $l"; done
 
       - name: 类型检查 + 构建
         run: npm run build
@@ -93,14 +107,38 @@ jobs:
         working-directory: src-tauri
 
       - name: 编译检查
-        run: cargo check
+        id: cargo_check
+        shell: bash
         working-directory: src-tauri
+        run: |
+          set -o pipefail
+          cargo check 2>&1 | tee check.log
+
+      - name: 诊断：编译检查失败原因
+        if: failure() && steps.cargo_check.outcome == 'failure'
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          grep -aE '^error|panicked|not found|failed to run|Runtime\.|thread' check.log | head -8 | while read -r l; do echo "::error::$l"; done
+          tail -2 check.log | while read -r l; do echo "::error::[末尾] $l"; done
 
       - name: Clippy（视警告为错误）
         run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
       - name: Rust 单测（core 层 + 前后端契约集成测试）
-        run: cargo test
+        id: cargo_test
+        shell: bash
         working-directory: src-tauri
+        run: |
+          set -o pipefail
+          cargo test 2>&1 | tee test.log
+
+      - name: 诊断：Rust 单测失败原因
+        if: failure() && steps.cargo_test.outcome == 'failure'
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          grep -aE '^test .*FAILED|panicked|^failures:|^error|left:|right:' test.log | head -8 | while read -r l; do echo "::error::$l"; done
+          grep -aE '^test .*FAILED|^test result' test.log | tail -2 | while read -r l; do echo "::error::[末尾] $l"; done
 

@@ -98,8 +98,20 @@ jobs:
           echo "package.json=$VERSION  tag=$TAG"
           test "$VERSION" = "$TAG" || { echo "::error::tag 与版本号不一致"; exit 1; }
 
+      # 同 ci.yml：日志正文看不到（要登录 / 要 token），失败时把关键行写成
+      # annotation —— 那是公开可读的，不用开网页也能知道 Linux / macOS 为什么没出包。
       - name: 出包
-        run: npm run tauri:build -- ${{ matrix.args }}
+        id: build_pkg
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run tauri:build -- ${{ matrix.args }} 2>&1 | tee build.log
+
+      - name: 诊断：出包失败原因
+        if: failure() && steps.build_pkg.outcome == 'failure'
+        shell: bash
+        run: |
+          grep -aE '^error|panicked|Error:|failed|not found|Cannot|Timeout' build.log | tail -8 | while read -r l; do echo "::error::$l"; done
 
       # 冒烟：把刚打出来的包真的启动一次，确认界面渲染且无运行时错误。
       # WebView2 在 windows-latest 上已预装；这里验证的是**产物**而不是源码。
