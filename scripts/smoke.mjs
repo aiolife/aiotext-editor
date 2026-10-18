@@ -371,6 +371,117 @@ try {
       menu?.groups?.join(' / ') === '排版规范 / 常用',
       menu?.groups?.join(' / ') ?? '',
     );
+
+    // v0.9：五个排版类工具**端到端**跑一遍 —— 菜单 → 选项对话框 → 预览 → 应用。
+    //
+    // 上面那几条只能证明「入口在」，这里证明的是「规则真的按预期改写了正文」：
+    // 判据是编辑器里最终落在文档上的文本，逐字比对。
+    // `evaluate` 与 `window.__perf` 都定义在后面的性能段里，这里还轮不到它们出场，
+    // 所以本段自带一套最小 helper。
+    const runJs = async (expression) => {
+      const r = await cdp.send('Runtime.evaluate', {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      if (r.exceptionDetails) {
+        throw new Error(`排版端到端求值异常：${r.exceptionDetails.text}`);
+      }
+      return r.result?.value;
+    };
+
+    await runJs(`
+      window.__layout = {
+        frame: () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 120))),
+        // CodeMirror 把不可见字符渲染成了符号，读回真实文本要还原；
+        // 空节点里的零宽字符也得剔掉（JSON 打印看不出来，但会让逐字比对假失败）
+        read: () => {
+          const VIS = { '·': ' ', '→': '\\t', '¬': '', '¶': '' };
+          return [...document.querySelectorAll('.cm-line')]
+            .map((l) => [...l.textContent].map((c) => VIS[c] ?? c).join(''))
+            .join('\\n')
+            .replace(/[\\u200b\\u200c\\u200d\\ufeff]/g, '');
+        },
+        pick: async (menuLabel, itemText) => {
+          const t = [...document.querySelectorAll('header .menubar-trigger')]
+            .find((e) => e.textContent.trim() === menuLabel);
+          if (!t) return false;
+          t.click();
+          await window.__layout.frame();
+          const panel = document.querySelector('.menu-panel');
+          const el = [...(panel?.querySelectorAll('.menu-item') ?? [])]
+            .find((e) => e.textContent.includes(itemText));
+          if (!el) return false;
+          el.click();
+          await window.__layout.frame();
+          return true;
+        },
+        applyIfDialog: () => {
+          const b = document.querySelector('.dialog-primary');
+          if (b && !b.disabled) {
+            b.click();
+            return true;
+          }
+          return false;
+        },
+        note: () => document.querySelector('.tool-preview-stat')?.textContent?.trim() ?? null,
+      };
+      true;
+    `);
+
+    const LAYOUT_CASES = [
+      {
+        name: '规范标点（引号 / 省略号 / 破折号 / 竖排横转）',
+        item: '规范标点',
+        sample: '他说"你好",真的吗?\n等等...\n他--走了\n甲︐乙',
+        expect: '他说“你好”，真的吗？\n等等……\n他——走了\n甲，乙',
+      },
+      {
+        name: '网文排版（中英 / 中数补空格 + 段首缩进，URL 不动）',
+        item: '网文排版',
+        sample: '第1章 起点\n中文abc混合\n见 https://a.com/x?y=1 不动',
+        expect: '　　第 1 章 起点\n　　中文 abc 混合\n　　见 https://a.com/x?y=1 不动',
+      },
+      {
+        name: '中文文案（标点后去空格 / 重复标点合并 / 数字单位）',
+        item: '中文文案',
+        sample: '中文， abc！！重量100kg\n等等...',
+        expect: '中文，abc！重量 100 kg\n等等……',
+      },
+      {
+        name: '技术文档（标题空格 / 列表符号 / 围栏空行，围栏内不动）',
+        item: '技术文档',
+        sample: '#标题\n* 项目\n正文abc\n```\ncode中文\n```',
+        expect: '# 标题\n- 项目\n正文 abc\n\n```\ncode中文\n\n```\n',
+      },
+      {
+        name: '片段处理（清两端空格 + 删空行）',
+        item: '片段处理',
+        sample: '  b  \n  a  \n\nb',
+        expect: 'b\na\nb',
+      },
+      {
+        // 不带「…」的项不弹对话框，点一下就直接应用
+        name: '常用项：删除行首行末空格',
+        item: '删除行首行末空格',
+        sample: '  甲  \n　乙\t',
+        expect: '甲\n乙',
+      },
+    ];
+
+    for (const c of LAYOUT_CASES) {
+      await runJs(`window.__layout.pick('文件', '新建')`);
+      await runJs(`document.querySelector('.cm-content')?.focus(); true`);
+      await cdp.send('Input.insertText', { text: c.sample });
+      await sleep(300);
+      await runJs(`window.__layout.pick('排版', '${c.item}')`);
+      await sleep(600); // 预览是防抖 250ms 之后才算
+      const previewNote = await runJs(`window.__layout.note()`);
+      await runJs(`window.__layout.applyIfDialog()`);
+      await sleep(350);
+      const got = await runJs(`window.__layout.read()`);
+      check(`排版端到端：${c.name}`, got === c.expect, `${previewNote ?? ''} → ${JSON.stringify(got)}`);
+    }
     check(
       '文件 → 编码转换 ▸ 有 4 个目标编码',
       extras?.convert?.ok === true && extras.convert.items.length === 4,
