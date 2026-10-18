@@ -165,6 +165,7 @@
 | `src/App.tsx` | 会话恢复并行化；7 个对话框改 `lazy` + `Suspense`；空白页去掉文字 |
 | `src/store/settingsStore.ts` | 设置缓存（首帧用上次值） |
 | `scripts/smoke.mjs` | 菜单断言改写（简繁 6 方向 / 排版 11 项 2 组）、新增空白页断言、**新增 6 条排版工具端到端断言**（菜单 → 选项 → 预览 → 应用，逐字比对编辑器里的最终结果） |
+| `package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` | 版本号 `0.1.0` → **`0.9.0`**（三处统一；此前只有文档写 v0.9，安装包仍叫 `AioTextEditor_0.1.0_x64-setup.exe`） |
 | `src/platform/tauriApi.test.ts` | 工具默认值表同步到 24 项并锁住排版类工具的默认值 |
 
 另删除死代码 `src/components/ConvertMenu.tsx`。
