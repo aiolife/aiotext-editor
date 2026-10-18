@@ -425,6 +425,7 @@ describe('F-09 整理工具接口', () => {
   });
 
   it('每个工具都有默认选项，且与后端字段名一致', () => {
+    // v0.9：新增 6 个步骤（5 个排版类工具 + 「删除行首行末空格」）
     const ids: ToolId[] = [
       'remove_half_width',
       'full_to_half',
@@ -432,6 +433,7 @@ describe('F-09 整理工具接口', () => {
       'normalize_line_head',
       'trim_line_end',
       'trim_line_head',
+      'trim_both',
       'remove_intra_line_breaks',
       'sort_lines',
       'dedup_lines',
@@ -444,8 +446,38 @@ describe('F-09 整理工具接口', () => {
       'fix_brackets',
       'half_quote_to_full',
       'vertical_to_horizontal',
+      'normalize_punctuation',
+      'web_novel_layout',
+      'chinese_copywriting',
+      'tech_doc_layout',
+      'snippet_process',
     ];
     expect(Object.keys(TOOL_OPTION_DEFAULTS).sort()).toEqual([...ids].sort());
+    // 排版类工具的默认开关（与 Rust `Default` 逐字段一致）
+    expect(TOOL_OPTION_DEFAULTS.normalize_punctuation).toMatchObject({
+      quoteStyle: 'mainland',
+      fixEllipsis: true,
+      fixDash: true,
+      halfToFullPunct: true,
+      fixBrackets: false,
+      checkBrackets: true,
+      verticalToHorizontal: true,
+    });
+    expect(TOOL_OPTION_DEFAULTS.web_novel_layout).toMatchObject({
+      cjkLatin: true,
+      cjkDigit: true,
+      squeezeSpaces: true,
+      trimEnd: true,
+      indent: 2,
+      skipCode: true,
+    });
+    expect(TOOL_OPTION_DEFAULTS.snippet_process).toMatchObject({
+      trimHead: true,
+      trimEnd: true,
+      removeEmpty: true,
+      sort: false,
+      sortMode: 'unicode',
+    });
     // 关键默认值与 F-09 一致（Rust 端由单测 defaults_match_spec 锁定同一组值）
     expect(TOOL_OPTION_DEFAULTS.simple_layout.indent).toBe(2);
     expect(TOOL_OPTION_DEFAULTS.normalize_line_head).toMatchObject({ indent: 2, force: true });

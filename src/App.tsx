@@ -19,14 +19,13 @@
  * 「自定义快捷键」才可能对**所有**命令生效——否则每加一个快捷键就要再写一个
  * 监听器，且用户改不了。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTabsStore, type EditorTab, type SaveDecision } from './store/tabsStore';
 import { useSettingsStore } from './store/settingsStore';
 import { countOccurrences, countTextStats } from './shared/textStats';
 import { toast } from './store/toastStore';
 import { ToastHost } from './components/ToastHost';
-import { HelpDialog } from './components/HelpDialog';
-import { SettingsDialog, type SettingsTab } from './components/SettingsDialog';
+import type { SettingsTab } from './components/SettingsDialog';
 import {
   buildIndex,
   findConflicts,
@@ -79,14 +78,43 @@ import { ReloadDialog } from './components/ReloadDialog';
 import { UnmappableDialog } from './components/UnmappableDialog';
 import { ConfirmCloseDialog, type CloseDecision } from './components/ConfirmCloseDialog';
 import { MenuBar } from './components/MenuBar';
-import { ConvertDialog, type ConvertTarget } from './components/ConvertDialog';
+import type { ConvertTarget } from './components/ConvertDialog';
 import { SearchPanel } from './components/SearchPanel';
-import { ReplaceTableDialog } from './components/ReplaceTableDialog';
 import { ToolOptionsDialog } from './components/ToolOptionsDialog';
-import { CompareDialog } from './components/CompareDialog';
 import { CompareBar } from './components/CompareBar';
-import { MergeDialog } from './components/MergeDialog';
-import { BatchDialog } from './components/BatchDialog';
+
+/**
+ * 对话框按需加载（v0.9 启动优化）
+ *
+ * 首屏只需要「菜单栏 + 多标签 + 编辑器 + 状态栏」，而这七个对话框（替换表编辑器、
+ * 批处理、合并、比较、选项、帮助、转换预览）占了主包里 CodeMirror 之外的很大一块。
+ * 打进同一个 chunk 的话，用户每次启动都要为「也许会打开的对话框」付解析与执行的钱。
+ *
+ * 拆出去之后：点开对话框时才去取对应 chunk（本地资源，几十毫秒级），
+ * 首帧要解析的 JS 明显变少。**编辑器不拆**——它是启动后立刻要用的东西，
+ * 拆了只会把「能打字」的时间点往后推。
+ */
+const HelpDialog = lazy(() =>
+  import('./components/HelpDialog').then((m) => ({ default: m.HelpDialog })),
+);
+const SettingsDialog = lazy(() =>
+  import('./components/SettingsDialog').then((m) => ({ default: m.SettingsDialog })),
+);
+const ConvertDialog = lazy(() =>
+  import('./components/ConvertDialog').then((m) => ({ default: m.ConvertDialog })),
+);
+const ReplaceTableDialog = lazy(() =>
+  import('./components/ReplaceTableDialog').then((m) => ({ default: m.ReplaceTableDialog })),
+);
+const CompareDialog = lazy(() =>
+  import('./components/CompareDialog').then((m) => ({ default: m.CompareDialog })),
+);
+const MergeDialog = lazy(() =>
+  import('./components/MergeDialog').then((m) => ({ default: m.MergeDialog })),
+);
+const BatchDialog = lazy(() =>
+  import('./components/BatchDialog').then((m) => ({ default: m.BatchDialog })),
+);
 
 /**
  * 焦点是否落在「用户正在打字」的地方。
@@ -310,46 +338,53 @@ export default function App() {
         setSessionReady(true);
         return;
       }
-      const restored: EditorTab[] = [];
-      const unreadable: string[] = [];
-      for (const st of session.tabs) {
-        const base = {
-          id: st.id,
-          filePath: st.filePath,
-          fileName: st.fileName,
-          encoding: st.encoding,
-          lineEnding: st.lineEnding,
-          hadBom: st.hadBom,
-          cursorLine: st.cursorLine,
-          cursorColumn: st.cursorColumn,
-        };
-        // 会话里带了正文（有未保存修改 / 从未保存过）→ 直接用，一个字都不丢
-        if (st.content !== null) {
-          restored.push({ ...base, content: st.content, dirty: st.dirty });
-          continue;
-        }
-        if (!st.filePath) {
-          restored.push({ ...base, content: '', dirty: st.dirty });
-          continue;
-        }
-        // 已保存的标签：从磁盘重读（文件可能已被外部改动，以磁盘为准）
-        try {
-          const loaded = await fsRead(st.filePath);
-          restored.push({
-            ...base,
-            content: loaded.text,
-            encoding: loaded.encoding,
-            lineEnding: loaded.lineEnding,
-            hadBom: loaded.hadBom,
-            dirty: false,
-          });
-        } catch {
-          // 文件被删 / 挪走：保留标签但标为未保存，免得用户以为内容还在
-          unreadable.push(st.filePath);
-          restored.push({ ...base, content: '', dirty: true });
-        }
-      }
+      // v0.9：并行读盘。原来是逐个 `await fsRead`，N 个标签就是 N 次串行往返
+      // （IPC + 磁盘读首尾相接），文件越多启动越慢，期间界面一直停在「无标签」。
+      // 并发后总耗时取决于最慢的那一个，顺序仍按会话里的顺序还原。
+      const settled = await Promise.all(
+        session.tabs.map(async (st): Promise<{ tab: EditorTab; unreadable: string | null }> => {
+          const base = {
+            id: st.id,
+            filePath: st.filePath,
+            fileName: st.fileName,
+            encoding: st.encoding,
+            lineEnding: st.lineEnding,
+            hadBom: st.hadBom,
+            cursorLine: st.cursorLine,
+            cursorColumn: st.cursorColumn,
+          };
+          // 会话里带了正文（有未保存修改 / 从未保存过）→ 直接用，一个字都不丢
+          if (st.content !== null) {
+            return { tab: { ...base, content: st.content, dirty: st.dirty }, unreadable: null };
+          }
+          if (!st.filePath) {
+            return { tab: { ...base, content: '', dirty: st.dirty }, unreadable: null };
+          }
+          // 已保存的标签：从磁盘重读（文件可能已被外部改动，以磁盘为准）
+          try {
+            const loaded = await fsRead(st.filePath);
+            return {
+              tab: {
+                ...base,
+                content: loaded.text,
+                encoding: loaded.encoding,
+                lineEnding: loaded.lineEnding,
+                hadBom: loaded.hadBom,
+                dirty: false,
+              },
+              unreadable: null,
+            };
+          } catch {
+            // 文件被删 / 挪走：保留标签但标为未保存，免得用户以为内容还在
+            return { tab: { ...base, content: '', dirty: true }, unreadable: st.filePath };
+          }
+        }),
+      );
       if (cancelled) return;
+      const restored = settled.map((item) => item.tab);
+      const unreadable = settled
+        .map((item) => item.unreadable)
+        .filter((p): p is string => p !== null);
       restoreSession(restored, session.activeTabId);
       setSessionReady(true);
       if (unreadable.length > 0) {
@@ -1429,23 +1464,9 @@ export default function App() {
             highlights={highlights}
           />
         ) : (
-          <div className="app-placeholder">
-            第七阶段：批处理（F-08）。
-            <br />
-            「新建」或「打开…」开始编辑；「功能」菜单提供简繁转换与「替换表管理…」。
-            <br />
-            「整理」菜单按行处理 / 空格与全半角 / 标点与括号 / 排版与分段分组，带「…」的工具可调选项并实时预览；
-            有选区时只整理选区，否则整理整篇，全部可 Ctrl+Z 撤销。
-            <br />
-            打开两份文本后可用「比较…」平铺校对（F5 跳差异，可忽略回车 / 空格 / 标点，
-            异体字按 fc1 / fc2 视为相同）；「合并…」支持手工清单与正则自动分文件。
-            <br />
-            「批处理…」把整理步骤编成流水线，对整个目录（可递归）批量执行，
-            支持输入 / 输出编码、<code>.bak</code> 备份、保留 mtime、实时进度与错误面板，可中途取消。
-            <br />
-            「查找/替换」（Ctrl+F）支持中文类目（<code>\c[GBK]</code>、<code>\c[天干]</code>、
-            <code>\a</code>、<code>\d</code>），并可选择「使用工具」把整理工具套用到每个命中上。
-          </div>
+          // 关掉所有标签后就是一片空白：不塞欢迎语、不塞功能介绍。
+          // 启动即编辑是本项目的取向（见 PRD），空白页只是「现在没有文档」这件事本身。
+          <div className="app-placeholder" />
         )}
         {compare && (
           <CompareBar
@@ -1464,9 +1485,12 @@ export default function App() {
       {/* F-11：状态栏可整体隐藏（设置 → 外观，或快捷键「显示 / 隐藏状态栏」） */}
       {appearance.showStatusBar ? <StatusBar tab={activeTab} /> : null}
 
-      {reloadTab && (
-        <ReloadDialog
-          tab={reloadTab}
+      {/* 对话框按需加载的边界：`fallback={null}` 是因为它们本来就是条件渲染的，
+          取 chunk 的那几十毫秒里什么都不画，比画一个空框更干净 */}
+      <Suspense fallback={null}>
+        {reloadTab && (
+          <ReloadDialog
+            tab={reloadTab}
           onConfirm={async (encodingLabel) => {
             await reloadWithEncoding(reloadTab.id, encodingLabel);
             setReloadTabId(null);
@@ -1606,6 +1630,8 @@ export default function App() {
           }}
         />
       )}
+
+      </Suspense>
 
       {/* 全局提示队列（第九阶段）：挂在根部，z-index 高于对话框遮罩 */}
       <ToastHost />

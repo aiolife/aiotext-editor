@@ -233,7 +233,7 @@ src-tauri/data/legacy/          # 开放文本格式（详见 docs/06-data-dicti
 | `s2hk.json` | 简体 → 香港繁体 | 面向香港地区 |
 | `hk2s.json` | 香港繁体 → 简体 | 处理香港繁体资料 |
 
-这 6 种**就是全部**：「功能」菜单里直接点用，没有二级菜单，也不再有「常用 / 其他」之分。
+这 6 种**就是全部**：「简繁」菜单里直接点用，没有二级菜单，也不再有「常用 / 其他」之分。
 
 > **实现注记（v0.5：方向收敛）**：原先提供的 8 种低频方向 —— `s2tw` / `tw2s` / `t2tw` / `tw2t` / `t2hk` / `hk2t` / `t2jp` / `jp2t` —— 已按用户要求**从引擎侧彻底删除**：`core/opencc.rs` 的 `Direction` 枚举不再有这些变体、`all_standard()` 只返回 6 个、这些 id 反序列化时会失败（不是"UI 不显示但引擎还认"）。需要它们请走 `Custom`（在 `%APPDATA%/AioTextEditor/configs/` 放自己的配置 JSON）。
 >
@@ -939,7 +939,22 @@ pub struct BatchRequest {
 | 竖排符号横转 | `vertical_to_horizontal` | |
 | 删除行首空格 | `trim_line_head` | |
 
+### v0.9 新增：5 个排版类工具 + 1 个高频直点项
+
+| 名称 | 模块 | 备注 |
+|------|------|------|
+| 规范标点 | `normalize_punctuation` | 按 GB/T 15834-2011：引号体系（大陆 “”‘’ / 港澳台 「」『』 / 不动）、省略号统一 `……`、破折号统一 `——`、中文语境里的半角标点转全角、竖排符号横转；可附「括号配对检查 / 嵌套改写」 |
+| 网文排版 | `web_novel_layout` | 中英文 / 中数之间补空格（跳过 URL 与行内代码）、去掉全角标点旁的多余空格、清理行尾空格、段首缩进（全角空格个数可调） |
+| 中文文案 | `chinese_copywriting` | 中英空格 + 标点后不留空格 + 重复标点合并（`！！`→`！`）+ 省略号 / 破折号 + 数字与单位之间补空格（`100kg`→`100 kg`） |
+| 技术文档 | `tech_doc_layout` | Markdown：`#标题`→`# 标题`、列表符号统一 `-`、代码围栏前后补空行、行尾去空格、围栏外的中英空格、末尾补换行；**围栏内部一律不动** |
+| 片段处理 | `snippet_process` | 行级批处理：去行首 / 行末空格、删空行、段间空一行、去重、排序（4 种）、删半角字符、合并段内回车——原来散在菜单里的细项收在这里 |
+| 删除行首行末空格 | `trim_both` | 一次清两端（原 `trim_line_head` / `trim_line_end` 仍保留，供片段处理与批处理组合） |
+
 各步骤均可作为批处理流水线的一部分复用。
+
+> **v0.9：菜单只露出 11 项。** `pipelines::catalog()` 从 18 项收成 11 项（5 个排版类工具 + 6 个高频直点项），
+> 其余 13 个步骤不再各自占一个菜单项，但**能力一条没删**：它们仍可被 `from_id` 构造，
+> 单测 `internal_steps_are_still_constructible` 与契约测试盯的就是这件事，批处理（F-08）也照旧选得到。
 
 ### 9.1 实现注记（2026-10-15，第五阶段；2026-10-18 v0.5 修订）
 
@@ -947,7 +962,7 @@ pub struct BatchRequest {
 
 
 
-- **目录驱动**：18 个工具的分组、`has_options`（菜单显示「…」）、`inspects_only`（标「仅检查」）与各自的默认选项全部由后端 `pipelines::catalog()` 提供，前端不写死工具清单。
+- **目录驱动**：工具（v0.9 起菜单露出 11 项）的分组、`has_options`（菜单显示「…」）、`inspects_only`（标「仅检查」）与各自的默认选项全部由后端 `pipelines::catalog()` 提供，前端不写死工具清单。
 - **带「…」的工具共 11 个**（多于本表显式写了"选项"的 6 个）：`remove_half_width`、`full_to_half`、`half_to_full`、`sort_lines`、`dedup_lines`、`normalize_line_head`、`remove_intra_line_breaks`、`auto_segment`、`control_width`、`fix_brackets`、`simple_layout`。其余 7 个（`trim_line_head`、`trim_line_end`、`remove_empty_lines`、`insert_blank_between`、`vertical_to_horizontal`、`half_quote_to_full`、`match_brackets`）**点一下即以默认选项应用**。
 - **行尾符保真**：所有行级工具保留原文的 `\r\n` / `\n` / `\r`，并保留"末尾是否有换行"（`split_lines` 返回 `(内容, 行尾符)` 对）。
 - **全半角互转**：`full_to_half` 与 `half_to_full` 共用同一实现（偏移 `+0xFEE0` 双向对称）；默认**只动字母数字与空格**，中文标点 `，。` 不会被变成 `,.`，需要时在同一对话框里显式打开"转换标点"。

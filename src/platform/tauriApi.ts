@@ -480,6 +480,7 @@ export type ToolId =
   | 'normalize_line_head'
   | 'trim_line_end'
   | 'trim_line_head'
+  | 'trim_both'
   | 'remove_intra_line_breaks'
   | 'sort_lines'
   | 'dedup_lines'
@@ -491,12 +492,20 @@ export type ToolId =
   | 'match_brackets'
   | 'fix_brackets'
   | 'half_quote_to_full'
-  | 'vertical_to_horizontal';
+  | 'vertical_to_horizontal'
+  // v0.9 排版类工具
+  | 'normalize_punctuation'
+  | 'web_novel_layout'
+  | 'chinese_copywriting'
+  | 'tech_doc_layout'
+  | 'snippet_process';
 
 /** 删除半角字符的范围 */
 export type HalfWidthMode = 'all' | 'alnum' | 'punct';
 /** 按行排序方式 */
 export type SortMode = 'unicode' | 'reverse' | 'lengthAsc' | 'lengthDesc';
+/** 引号体系（规范标点） */
+export type QuoteStyle = 'mainland' | 'corner' | 'keep';
 
 /**
  * 工具选项（各工具只用其中若干项）
@@ -525,6 +534,44 @@ export interface ToolOptions {
   width?: number;
   forbidHead?: string;
   autoClose?: boolean;
+  // ---- v0.9 排版类工具 ----
+  /** 规范标点：引号体系 */
+  quoteStyle?: QuoteStyle;
+  fixEllipsis?: boolean;
+  fixDash?: boolean;
+  halfToFullPunct?: boolean;
+  fixBrackets?: boolean;
+  checkBrackets?: boolean;
+  verticalToHorizontal?: boolean;
+  /** 网文排版 */
+  cjkLatin?: boolean;
+  cjkDigit?: boolean;
+  squeezeSpaces?: boolean;
+  trimEnd?: boolean;
+  skipCode?: boolean;
+  /** 中文文案 */
+  spaceCjkLatin?: boolean;
+  spaceCjkDigit?: boolean;
+  noSpaceAfterPunct?: boolean;
+  dedupPunct?: boolean;
+  ellipsisAndDash?: boolean;
+  digitUnit?: boolean;
+  /** 技术文档 */
+  headingSpace?: boolean;
+  listMarker?: boolean;
+  fenceBlank?: boolean;
+  cjkSpace?: boolean;
+  finalNewline?: boolean;
+  /** 片段处理 */
+  trimHead?: boolean;
+  removeEmpty?: boolean;
+  insertBlank?: boolean;
+  dedup?: boolean;
+  sort?: boolean;
+  sortMode?: SortMode;
+  removeHalfWidth?: boolean;
+  halfWidthMode?: HalfWidthMode;
+  joinLines?: boolean;
 }
 
 /** 一个整理步骤（后端 `PipelineStep`）；`{kind}` 单独发出即为「默认选项」 */
@@ -627,6 +674,53 @@ export const TOOL_OPTION_DEFAULTS: Record<ToolId, ToolOptions> = {
   fix_brackets: { autoClose: true },
   half_quote_to_full: {},
   vertical_to_horizontal: {},
+  trim_both: {},
+  // ---- v0.9 排版类工具 ----
+  normalize_punctuation: {
+    quoteStyle: 'mainland',
+    fixEllipsis: true,
+    fixDash: true,
+    halfToFullPunct: true,
+    fixBrackets: false,
+    checkBrackets: true,
+    verticalToHorizontal: true,
+  },
+  web_novel_layout: {
+    cjkLatin: true,
+    cjkDigit: true,
+    squeezeSpaces: true,
+    trimEnd: true,
+    indent: 2,
+    skipCode: true,
+  },
+  chinese_copywriting: {
+    spaceCjkLatin: true,
+    spaceCjkDigit: true,
+    noSpaceAfterPunct: true,
+    dedupPunct: true,
+    ellipsisAndDash: true,
+    digitUnit: true,
+  },
+  tech_doc_layout: {
+    headingSpace: true,
+    listMarker: true,
+    fenceBlank: true,
+    trimEnd: true,
+    cjkSpace: true,
+    finalNewline: true,
+  },
+  snippet_process: {
+    trimHead: true,
+    trimEnd: true,
+    removeEmpty: true,
+    insertBlank: false,
+    dedup: false,
+    sort: false,
+    sortMode: 'unicode',
+    removeHalfWidth: false,
+    halfWidthMode: 'all',
+    joinLines: false,
+  },
 };
 
 /** 工具栏常用整理快捷入口（F-09 §6.2：工具栏放置常用快捷按钮） */

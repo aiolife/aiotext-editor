@@ -250,6 +250,194 @@ impl Default for FixBracketsOptions {
 }
 
 // ---------------------------------------------------------------------------
+// v0.9 排版类工具的选项
+//
+// 这批工具的共同点：**规则可以按开关组合**，所以每个工具都是「若干条独立规则
+// + 一个默认值集合」。规则之间互不影响，任意组合跑两遍结果不变（幂等）。
+// ---------------------------------------------------------------------------
+
+/// 引号体系（规范标点）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum QuoteStyle {
+    /// 大陆：双引号 “”，单引号 ‘’
+    #[default]
+    Mainland,
+    /// 港澳台：外层「」、内层『』
+    Corner,
+    /// 不动引号（保留原文写法）
+    Keep,
+}
+
+/// 规范标点（GB/T 15834-2011）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PunctOptions {
+    pub quote_style: QuoteStyle,
+    /// 省略号统一为「……」（六点，占两格）
+    pub fix_ellipsis: bool,
+    /// 破折号统一为「——」（两字线）
+    pub fix_dash: bool,
+    /// 中文语境里的半角标点（,;:?!()）转全角
+    pub half_to_full_punct: bool,
+    /// 括号按嵌套阶梯改写并补齐未闭合的
+    pub fix_brackets: bool,
+    /// 检查括号配对（只报告，不改写正文）
+    pub check_brackets: bool,
+    /// 竖排标点（U+FE10 区）转横排写法
+    pub vertical_to_horizontal: bool,
+}
+
+impl Default for PunctOptions {
+    fn default() -> Self {
+        Self {
+            quote_style: QuoteStyle::Mainland,
+            fix_ellipsis: true,
+            fix_dash: true,
+            half_to_full_punct: true,
+            fix_brackets: false,
+            check_brackets: true,
+            vertical_to_horizontal: true,
+        }
+    }
+}
+
+/// 网文排版（中英文 / 中数之间补空格，段首缩进）
+///
+/// 参考 `vscode-pangu2`：核心是**在 CJK 与拉丁字母、数字之间补一个半角空格**，
+/// 反向（去掉全角标点两侧多余空格）也在里面——网文稿件里这两种脏数据都常见。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SpacingOptions {
+    /// 中文与拉丁字母之间补空格
+    pub cjk_latin: bool,
+    /// 中文与数字之间补空格
+    pub cjk_digit: bool,
+    /// 去掉全角标点两侧多余的半角空格
+    pub squeeze_spaces: bool,
+    /// 清理行尾空格
+    pub trim_end: bool,
+    /// 段首缩进（全角空格个数，0 = 不动缩进）
+    pub indent: usize,
+    /// 跳过 URL 与反引号内的代码（默认开启）
+    pub skip_code: bool,
+}
+
+impl Default for SpacingOptions {
+    fn default() -> Self {
+        Self {
+            cjk_latin: true,
+            cjk_digit: true,
+            squeeze_spaces: true,
+            trim_end: true,
+            indent: 2,
+            skip_code: true,
+        }
+    }
+}
+
+/// 中文文案（chinese-copywriting-guidelines 的常用子集）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CopywritingOptions {
+    /// 中文与拉丁字母之间补空格
+    pub space_cjk_latin: bool,
+    /// 中文与数字之间补空格
+    pub space_cjk_digit: bool,
+    /// 全角标点之后不留空格
+    pub no_space_after_punct: bool,
+    /// 重复标点合并（！！→！、。。→。）
+    pub dedup_punct: bool,
+    /// 省略号与破折号规范化（... → ……、-- → ——）
+    pub ellipsis_and_dash: bool,
+    /// 数字与英文单位之间补空格（100kg → 100 kg）
+    pub digit_unit: bool,
+}
+
+impl Default for CopywritingOptions {
+    fn default() -> Self {
+        Self {
+            space_cjk_latin: true,
+            space_cjk_digit: true,
+            no_space_after_punct: true,
+            dedup_punct: true,
+            ellipsis_and_dash: true,
+            digit_unit: true,
+        }
+    }
+}
+
+/// 技术文档（Markdown 排版规约）
+///
+/// 参考 `Snippet-Scripts` 与常见中文技术写作约定：标题与内容之间要有空格、
+/// 列表符号统一、代码围栏前后留空行、行尾不留空格、代码内部一律不动。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TechDocOptions {
+    /// `#标题` → `# 标题`
+    pub heading_space: bool,
+    /// 列表符号统一为 `-`
+    pub list_marker: bool,
+    /// 代码围栏前后补空行
+    pub fence_blank: bool,
+    /// 清理行尾空格
+    pub trim_end: bool,
+    /// 中英文之间补空格（代码围栏内不动）
+    pub cjk_space: bool,
+    /// 文件末尾补一个换行
+    pub final_newline: bool,
+}
+
+impl Default for TechDocOptions {
+    fn default() -> Self {
+        Self {
+            heading_space: true,
+            list_marker: true,
+            fence_blank: true,
+            trim_end: true,
+            cjk_space: true,
+            final_newline: true,
+        }
+    }
+}
+
+/// 片段处理（行级批处理，把原来散在菜单里的细项收进来）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SnippetOptions {
+    pub trim_head: bool,
+    pub trim_end: bool,
+    pub remove_empty: bool,
+    /// 段间空一行
+    pub insert_blank: bool,
+    pub dedup: bool,
+    pub sort: bool,
+    pub sort_mode: SortMode,
+    /// 删除半角字符（模式见 `HalfWidthMode`）
+    pub remove_half_width: bool,
+    pub half_width_mode: HalfWidthMode,
+    /// 删除段内回车（合并为一段）
+    pub join_lines: bool,
+}
+
+impl Default for SnippetOptions {
+    fn default() -> Self {
+        Self {
+            trim_head: true,
+            trim_end: true,
+            remove_empty: true,
+            insert_blank: false,
+            dedup: false,
+            sort: false,
+            sort_mode: SortMode::Unicode,
+            remove_half_width: false,
+            half_width_mode: HalfWidthMode::default(),
+            join_lines: false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 步骤（= 工具）定义
 // ---------------------------------------------------------------------------
 
@@ -278,6 +466,14 @@ pub enum PipelineStep {
     FixBrackets(FixBracketsOptions),
     HalfQuoteToFull,
     VerticalToHorizontal,
+    // ---- v0.9 排版类工具 ----
+    NormalizePunctuation(PunctOptions),
+    WebNovelLayout(SpacingOptions),
+    ChineseCopywriting(CopywritingOptions),
+    TechDocLayout(TechDocOptions),
+    SnippetProcess(SnippetOptions),
+    /// 删除行首**与**行末空格（菜单里的高频直点项）
+    TrimBoth,
 }
 
 impl PipelineStep {
@@ -302,6 +498,12 @@ impl PipelineStep {
             Self::FixBrackets(_) => "fix_brackets",
             Self::HalfQuoteToFull => "half_quote_to_full",
             Self::VerticalToHorizontal => "vertical_to_horizontal",
+            Self::NormalizePunctuation(_) => "normalize_punctuation",
+            Self::WebNovelLayout(_) => "web_novel_layout",
+            Self::ChineseCopywriting(_) => "chinese_copywriting",
+            Self::TechDocLayout(_) => "tech_doc_layout",
+            Self::SnippetProcess(_) => "snippet_process",
+            Self::TrimBoth => "trim_both",
         }
     }
 
@@ -357,7 +559,12 @@ pub struct BracketIssue {
     pub message: String,
 }
 
-/// 工具目录（18 项，顺序即菜单顺序）
+/// 工具目录（11 项，顺序即菜单顺序）
+///
+/// 这里列的是**菜单上露出**的项：5 个排版类工具 + 6 个高频直点项。
+/// 其余 13 个步骤不再各自占一个菜单项——它们的活儿被「规范标点」「片段处理」
+/// 收进了选项里（例如括号检查、排序、去重），或本就是低频能力。
+/// 它们仍然可以被 [`from_id`] 构造，批处理（F-08）的流水线也照旧可用。
 pub fn catalog() -> Vec<ToolMeta> {
     fn item(
         id: &str,
@@ -377,27 +584,60 @@ pub fn catalog() -> Vec<ToolMeta> {
         }
     }
     vec![
-        // ---- 行处理 ----
+        // ---- 排版规范 ----
         item(
-            "trim_line_head",
-            "删除行首空格",
-            "行处理",
-            "删除每行行首的半角 / 全角空格与制表符",
-            false,
+            "normalize_punctuation",
+            "规范标点",
+            "排版规范",
+            "按 GB/T 15834-2011 统一引号、省略号、破折号与半角标点",
+            true,
             false,
         ),
         item(
-            "trim_line_end",
-            "删除行末空格",
-            "行处理",
-            "删除每行行末的半角 / 全角空格与制表符",
+            "web_novel_layout",
+            "网文排版",
+            "排版规范",
+            "中英文 / 中数之间补空格、段首缩进、清理行尾空格",
+            true,
+            false,
+        ),
+        item(
+            "chinese_copywriting",
+            "中文文案",
+            "排版规范",
+            "中英空格、标点后不留空格、重复标点合并、省略号与破折号",
+            true,
+            false,
+        ),
+        item(
+            "tech_doc_layout",
+            "技术文档",
+            "排版规范",
+            "Markdown：标题空格、列表符号、代码块空行、中英空格",
+            true,
+            false,
+        ),
+        item(
+            "snippet_process",
+            "片段处理",
+            "排版规范",
+            "行级批处理：去空白、删除空行、去重、排序、合并段落",
+            true,
+            false,
+        ),
+        // ---- 常用（直接点用，不弹对话框） ----
+        item(
+            "trim_both",
+            "删除行首行末空格",
+            "常用",
+            "删除每行行首与行末的半角 / 全角空格与制表符",
             false,
             false,
         ),
         item(
             "remove_empty_lines",
             "删除空行",
-            "行处理",
+            "常用",
             "删除空行及只含半角 / 全角空格的行",
             false,
             false,
@@ -405,40 +645,15 @@ pub fn catalog() -> Vec<ToolMeta> {
         item(
             "insert_blank_between",
             "段间空一行",
-            "行处理",
+            "常用",
             "在段落之间插入一个空行（多余空行合并）",
             false,
             false,
         ),
         item(
-            "dedup_lines",
-            "删除重复行",
-            "行处理",
-            "相同内容只保留一行（默认保留首次出现）",
-            true,
-            false,
-        ),
-        item(
-            "sort_lines",
-            "按行排序",
-            "行处理",
-            "按 Unicode 或行长度排序（拼音 / 笔画排序待后续版本）",
-            true,
-            false,
-        ),
-        // ---- 空格与全半角 ----
-        item(
-            "remove_half_width",
-            "删除半角字符",
-            "空格与全半角",
-            "按模式删除半角字符（全部 / 仅字母数字 / 仅标点）",
-            true,
-            false,
-        ),
-        item(
             "full_to_half",
             "全角转半角",
-            "空格与全半角",
+            "常用",
             "全角字母数字转半角、全角空格转两个半角（可选转标点）",
             true,
             false,
@@ -446,81 +661,15 @@ pub fn catalog() -> Vec<ToolMeta> {
         item(
             "half_to_full",
             "半角转全角",
-            "空格与全半角",
+            "常用",
             "半角字母数字转全角（可选转标点、合并半角空格）",
-            true,
-            false,
-        ),
-        // ---- 标点与括号 ----
-        item(
-            "vertical_to_horizontal",
-            "竖排符号横转",
-            "标点与括号",
-            "竖排标点（U+FE10 区）转为横排写法",
-            false,
-            false,
-        ),
-        item(
-            "half_quote_to_full",
-            "半角引号转全角",
-            "标点与括号",
-            "半角 \" 与 ' 按前后引号自动配对为 “”‘’",
-            false,
-            false,
-        ),
-        item(
-            "match_brackets",
-            "匹配括号检查",
-            "标点与括号",
-            "检查括号配对（多余 / 不匹配 / 未闭合），只提示不改写",
-            false,
-            true,
-        ),
-        item(
-            "fix_brackets",
-            "括号嵌套转换",
-            "标点与括号",
-            "同款嵌套括号按阶梯改写为 （）→「」→『』，可自动补齐",
-            true,
-            false,
-        ),
-        // ---- 排版与分段 ----
-        item(
-            "normalize_line_head",
-            "规范行首",
-            "排版与分段",
-            "把行首缩进统一为指定个数的全角空格",
-            true,
-            false,
-        ),
-        item(
-            "remove_intra_line_breaks",
-            "删除段内回车",
-            "排版与分段",
-            "把段落内的换行合并为一行（段间空行可保留）",
-            true,
-            false,
-        ),
-        item(
-            "auto_segment",
-            "自动分段",
-            "排版与分段",
-            "按句末标点切分并加段首缩进，对话行不缩进",
-            true,
-            false,
-        ),
-        item(
-            "control_width",
-            "控制行宽",
-            "排版与分段",
-            "超过指定行宽后自动折行（CJK 按 2 个半角计）",
             true,
             false,
         ),
         item(
             "simple_layout",
             "简单排版",
-            "排版与分段",
+            "常用",
             "删除空行 + 规范行首 + 删除行末空格",
             true,
             false,
@@ -551,6 +700,12 @@ pub fn from_id(id: &str) -> AppResult<PipelineStep> {
         "fix_brackets" => PipelineStep::FixBrackets(FixBracketsOptions::default()),
         "half_quote_to_full" => PipelineStep::HalfQuoteToFull,
         "vertical_to_horizontal" => PipelineStep::VerticalToHorizontal,
+        "normalize_punctuation" => PipelineStep::NormalizePunctuation(PunctOptions::default()),
+        "web_novel_layout" => PipelineStep::WebNovelLayout(SpacingOptions::default()),
+        "chinese_copywriting" => PipelineStep::ChineseCopywriting(CopywritingOptions::default()),
+        "tech_doc_layout" => PipelineStep::TechDocLayout(TechDocOptions::default()),
+        "snippet_process" => PipelineStep::SnippetProcess(SnippetOptions::default()),
+        "trim_both" => PipelineStep::TrimBoth,
         other => return Err(AppError::Pipeline(format!("未知整理工具：{other}"))),
     };
     Ok(step)
@@ -581,6 +736,12 @@ pub fn run_step(text: &str, step: &PipelineStep) -> AppResult<StepOutcome> {
         PipelineStep::FixBrackets(o) => fix_brackets(text, o),
         PipelineStep::HalfQuoteToFull => half_quote_to_full(text),
         PipelineStep::VerticalToHorizontal => vertical_to_horizontal(text),
+        PipelineStep::NormalizePunctuation(o) => normalize_punctuation(text, o),
+        PipelineStep::WebNovelLayout(o) => web_novel_layout(text, o),
+        PipelineStep::ChineseCopywriting(o) => chinese_copywriting(text, o),
+        PipelineStep::TechDocLayout(o) => tech_doc_layout(text, o),
+        PipelineStep::SnippetProcess(o) => snippet_process(text, o),
+        PipelineStep::TrimBoth => trim_lines(text, true, true),
     })
 }
 
@@ -1631,6 +1792,588 @@ fn simple_layout(text: &str, opts: &SimpleLayoutOptions) -> StepOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// v0.9 排版类工具
+// ---------------------------------------------------------------------------
+
+/// 东亚文字（汉字、假名、谚文、CJK 符号与全角区）
+fn is_cjk_char(ch: char) -> bool {
+    matches!(ch as u32,
+        0x1100..=0x11FF
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE30..=0xFE4F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x20000..=0x3FFFD)
+}
+
+fn is_latin_char(ch: char) -> bool {
+    ch.is_ascii_alphabetic()
+}
+
+/// 中文里常用的全角标点（判断「空格该不该挨着它」用）
+fn is_full_punct(ch: char) -> bool {
+    matches!(
+        ch,
+        '，' | '。'
+            | '！'
+            | '？'
+            | '；'
+            | '：'
+            | '、'
+            | '（'
+            | '）'
+            | '【'
+            | '】'
+            | '《'
+            | '》'
+            | '「'
+            | '」'
+            | '『'
+            | '』'
+            | '“'
+            | '”'
+            | '‘'
+            | '’'
+            | '—'
+            | '…'
+            | '～'
+            | '·'
+    )
+}
+
+/// 一行里「不该动」的位置：行内代码与 URL
+///
+/// 中英文之间插空格这条规则一旦撞上 `https://…` 或 `` `code` `` 就会把人家的
+/// 字符串打散，所以先把这些区间标出来，插空格时跳过。
+fn protected_spans(chars: &[char], skip_code: bool) -> Vec<bool> {
+    let mut out = vec![false; chars.len()];
+    if !skip_code {
+        return out;
+    }
+    // 行内代码：反引号成对
+    let mut in_code = false;
+    for (index, &ch) in chars.iter().enumerate() {
+        if ch == '`' {
+            in_code = !in_code;
+            out[index] = true;
+            continue;
+        }
+        if in_code {
+            out[index] = true;
+        }
+    }
+    // URL：以 http:// https:// www. 开头，直到空白为止
+    for index in 0..chars.len() {
+        if out[index] {
+            continue;
+        }
+        let head: String = chars[index..].iter().take(8).collect();
+        if head.starts_with("http://") || head.starts_with("https://") || head.starts_with("www.") {
+            for (offset, &ch) in chars[index..].iter().enumerate() {
+                if ch.is_whitespace() {
+                    break;
+                }
+                out[index + offset] = true;
+            }
+        }
+    }
+    out
+}
+
+/// 按选项给一行补 / 删空格，返回 `(新行, 变更处数)`
+///
+/// 只在「两边都不是空格且都不在保护区」时插入，因此重复执行结果不变（幂等）。
+fn spacing_line(line: &str, o: &SpacingOptions) -> (String, usize) {
+    let chars: Vec<char> = line.chars().collect();
+    let protected = protected_spans(&chars, o.skip_code);
+    let mut out = String::with_capacity(line.len() + 8);
+    let mut changed = 0usize;
+    for (index, &cur) in chars.iter().enumerate() {
+        // 全角标点挨着的半角空格是多余的：删掉
+        if o.squeeze_spaces && cur == ' ' && !protected[index] {
+            let prev = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+            let next = chars.get(index + 1).copied();
+            let near_punct =
+                prev.is_some_and(is_full_punct) || next.is_some_and(is_full_punct);
+            if near_punct {
+                changed += 1;
+                continue;
+            }
+        }
+        if index > 0 {
+            let prev = chars[index - 1];
+            let need_space = prev != ' ' && cur != ' ' && !protected[index] && !protected[index - 1];
+            // 全角标点与英文之间不加空格（中文习惯），也避免与「标点后不留空格」互相拉锯
+            let boundary = !is_full_punct(prev) && !is_full_punct(cur);
+            let cjk_latin = o.cjk_latin
+                && ((is_cjk_char(prev) && is_latin_char(cur))
+                    || (is_latin_char(prev) && is_cjk_char(cur)));
+            let cjk_digit = o.cjk_digit
+                && ((is_cjk_char(prev) && cur.is_ascii_digit())
+                    || (prev.is_ascii_digit() && is_cjk_char(cur)));
+            if need_space && boundary && (cjk_latin || cjk_digit) {
+                out.push(' ');
+                changed += 1;
+            }
+        }
+        out.push(cur);
+    }
+    (out, changed)
+}
+
+/// 网文排版：补空格 + 缩进行首 + 清理行尾
+fn web_novel_layout(text: &str, o: &SpacingOptions) -> StepOutcome {
+    let indent: String = "\u{3000}".repeat(o.indent.min(8));
+    let mut changed = 0usize;
+    let mut indented = 0usize;
+    let (out, _) = map_lines(text, |line| {
+        let trimmed = if o.trim_end {
+            line.trim_end_matches(is_pad)
+        } else {
+            line
+        };
+        let (spaced, delta) = spacing_line(trimmed, o);
+        changed += delta;
+        if trimmed != line {
+            changed += 1;
+        }
+        // 段首缩进：已经有缩进的行不动（幂等）
+        if o.indent > 0 && !is_blank(&spaced) && !starts_with_pad(&spaced) {
+            indented += 1;
+            format!("{indent}{spaced}")
+        } else {
+            spaced
+        }
+    });
+    let mut notes = vec![format!("补空格 {changed} 处")];
+    if o.indent > 0 {
+        notes.push(format!("加段首缩进 {indented} 行"));
+    }
+    note_outcome(out, changed + indented, notes.join("；"))
+}
+
+/// 省略号与破折号规范化（GB/T 15834-2011）
+///
+/// - `...` / `。。。` / 单个 `…` → `……`（六点，占两格）
+/// - 两个及以上连续 `-` → `——`；只有一个 `-` 不动（可能是连字符）
+fn fix_ellipsis_dash(line: &str) -> (String, usize) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut changed = 0usize;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let cur = chars[index];
+        // 省略号：三个半角点
+        if cur == '.'
+            && chars.get(index + 1) == Some(&'.')
+            && chars.get(index + 2) == Some(&'.')
+            && chars.get(index + 3) != Some(&'.')
+        {
+            out.push_str("……");
+            changed += 1;
+            index += 3;
+            continue;
+        }
+        // 省略号：中文句号连用 / 单个 … / 奇数个 …
+        if cur == '…' || cur == '。' {
+            let mut run = 0usize;
+            while matches!(chars.get(index + run), Some('…') | Some('。')) {
+                run += 1;
+            }
+            if run >= 2 {
+                out.push_str("……");
+                changed += 1;
+                index += run;
+                continue;
+            }
+        }
+        // 破折号：连续两个及以上半角减号
+        if cur == '-' && chars.get(index + 1) == Some(&'-') {
+            let mut run = 0usize;
+            while chars.get(index + run) == Some(&'-') {
+                run += 1;
+            }
+            out.push_str("——");
+            changed += 1;
+            index += run;
+            continue;
+        }
+        out.push(cur);
+        index += 1;
+    }
+    (out, changed)
+}
+
+/// 半角标点转全角（只动「挨着中文」的那些，英文句子里的不动）
+fn half_punct_to_full(line: &str) -> (String, usize) {
+    const MAP: [(char, char); 10] = [
+        (',', '，'),
+        (';', '；'),
+        (':', '：'),
+        ('?', '？'),
+        ('!', '！'),
+        ('(', '（'),
+        (')', '）'),
+        ('[', '［'),
+        (']', '］'),
+        ('~', '～'),
+    ];
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut changed = 0usize;
+    for (index, &cur) in chars.iter().enumerate() {
+        let mapped = MAP.iter().find(|(from, _)| *from == cur).map(|(_, to)| *to);
+        match mapped {
+            Some(to) => {
+                let prev = index.checked_sub(1).and_then(|i| chars.get(i)).copied();
+                let next = chars.get(index + 1).copied();
+                let near_cjk = prev.is_some_and(is_cjk_char) || next.is_some_and(is_cjk_char);
+                if near_cjk {
+                    out.push(to);
+                    changed += 1;
+                } else {
+                    out.push(cur);
+                }
+            }
+            None => out.push(cur),
+        }
+    }
+    (out, changed)
+}
+
+/// 直引号按前后文配成对（沿用「半角引号转全角」的配对思路，只是引号样式可选）
+fn pair_quotes(line: &str, style: QuoteStyle) -> (String, usize) {
+    let (open2, close2, open1, close1) = match style {
+        QuoteStyle::Mainland => ('“', '”', '‘', '’'),
+        QuoteStyle::Corner => ('「', '」', '『', '』'),
+        QuoteStyle::Keep => return (line.to_owned(), 0),
+    };
+    let mut out = String::with_capacity(line.len());
+    let mut changed = 0usize;
+    let mut double_open = true;
+    let mut single_open = true;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                out.push(if double_open { open2 } else { close2 });
+                double_open = !double_open;
+                changed += 1;
+            }
+            '\'' => {
+                out.push(if single_open { open1 } else { close1 });
+                single_open = !single_open;
+                changed += 1;
+            }
+            other => out.push(other),
+        }
+    }
+    (out, changed)
+}
+
+/// 规范标点（GB/T 15834-2011）
+fn normalize_punctuation(text: &str, o: &PunctOptions) -> StepOutcome {
+    let mut changed = 0usize;
+    let mut current = String::new();
+    for (content, term) in split_lines(text) {
+        let mut line = content.to_owned();
+        if o.vertical_to_horizontal {
+            let mut converted = String::with_capacity(line.len());
+            for ch in line.chars() {
+                match vertical_mapping(ch) {
+                    Some(to) => {
+                        converted.push_str(to);
+                        changed += 1;
+                    }
+                    None => converted.push(ch),
+                }
+            }
+            line = converted;
+        }
+        let (quoted, delta) = pair_quotes(&line, o.quote_style);
+        changed += delta;
+        line = quoted;
+        if o.fix_ellipsis {
+            let (fixed, delta) = fix_ellipsis_dash(&line);
+            changed += delta;
+            line = fixed;
+        }
+        if o.half_to_full_punct {
+            let (fixed, delta) = half_punct_to_full(&line);
+            changed += delta;
+            line = fixed;
+        }
+        current.push_str(&line);
+        current.push_str(term);
+    }
+
+    let mut bracket_issues: Vec<BracketIssue> = Vec::new();
+    if o.check_brackets {
+        bracket_issues = match_brackets(&current).bracket_issues;
+    }
+    if o.fix_brackets {
+        let fixed = fix_brackets(&current, &FixBracketsOptions::default());
+        changed += fixed.changed;
+        current = fixed.text;
+    }
+
+    let mut notes = vec![format!("规范标点 {changed} 处")];
+    if !bracket_issues.is_empty() {
+        notes.push(format!("括号配对有 {} 处可疑", bracket_issues.len()));
+    }
+    if o.check_brackets && bracket_issues.is_empty() {
+        notes.push("括号配对正常".to_owned());
+    }
+    StepOutcome {
+        text: current,
+        changed,
+        notes,
+        bracket_issues,
+    }
+}
+
+/// 数字与英文单位之间补空格（100kg → 100 kg）
+fn space_digit_unit(line: &str) -> (String, usize) {
+    const UNITS: [&str; 12] = ["kg", "cm", "mm", "km", "px", "ms", "GB", "MB", "KB", "TB", "Hz", "GHz"];
+    let lower = line.to_lowercase();
+    let chars: Vec<char> = line.chars().collect();
+    let lower_chars: Vec<char> = lower.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut changed = 0usize;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let cur = chars[index];
+        if cur.is_ascii_digit() {
+            // 吃掉整个数字串
+            let start = index;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+            out.push_str(&chars[start..index].iter().collect::<String>());
+            // 数字后紧跟单位？
+            let rest: String = lower_chars[index..].iter().take(3).collect();
+            if let Some(unit) = UNITS.iter().find(|u| rest.starts_with(*u)) {
+                let len = unit.chars().count();
+                let after = chars.get(index + len).copied();
+                // 单位后面必须是非字母（避免把 kilogram 切成 kg ram）
+                if after.is_none_or(|c| !c.is_ascii_alphabetic()) {
+                    out.push(' ');
+                    changed += 1;
+                }
+            }
+            continue;
+        }
+        out.push(cur);
+        index += 1;
+    }
+    (out, changed)
+}
+
+/// 中文文案（chinese-copywriting-guidelines 常用子集）
+fn chinese_copywriting(text: &str, o: &CopywritingOptions) -> StepOutcome {
+    let mut changed = 0usize;
+    let mut current = String::new();
+    for (content, term) in split_lines(text) {
+        let mut line = content.to_owned();
+        if o.ellipsis_and_dash {
+            let (fixed, delta) = fix_ellipsis_dash(&line);
+            changed += delta;
+            line = fixed;
+        }
+        if o.dedup_punct {
+            let mut out = String::with_capacity(line.len());
+            let mut prev: Option<char> = None;
+            for ch in line.chars() {
+                let dup = matches!(ch, '！' | '？' | '，' | '。' | '；' | '：' | '、')
+                    && prev == Some(ch);
+                if dup {
+                    changed += 1;
+                    continue;
+                }
+                out.push(ch);
+                prev = Some(ch);
+            }
+            line = out;
+        }
+        if o.digit_unit {
+            let (fixed, delta) = space_digit_unit(&line);
+            changed += delta;
+            line = fixed;
+        }
+        // 中英 / 中数空格与「标点后不留空格」共用网文排版的核心
+        let spaced = spacing_line(
+            &line,
+            &SpacingOptions {
+                cjk_latin: o.space_cjk_latin,
+                cjk_digit: o.space_cjk_digit,
+                squeeze_spaces: o.no_space_after_punct,
+                trim_end: false,
+                indent: 0,
+                skip_code: true,
+            },
+        );
+        changed += spaced.1;
+        current.push_str(&spaced.0);
+        current.push_str(term);
+    }
+    note_outcome(current, changed, format!("中文文案规范 {changed} 处"))
+}
+
+/// 代码围栏行？（``` 或 ~~~ 开头）
+fn is_fence_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("```") || t.starts_with("~~~")
+}
+
+/// 技术文档（Markdown 排版规约）
+fn tech_doc_layout(text: &str, o: &TechDocOptions) -> StepOutcome {
+    let lines = split_lines(text);
+    let term = dominant_terminator(text);
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut in_fence = false;
+    let mut changed = 0usize;
+
+    for (content, _) in &lines {
+        let original = *content;
+        if is_fence_line(original) {
+            // 围栏前后留一个空行（幂等：已经有空行就不补）
+            if o.fence_blank && out.last().is_some_and(|prev| !prev.trim().is_empty()) {
+                out.push(String::new());
+                changed += 1;
+            }
+            out.push(original.to_owned());
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            out.push(original.to_owned());
+            continue;
+        }
+
+        let mut line = original.to_owned();
+        if o.heading_space {
+            let hashes = line.chars().take_while(|c| *c == '#').count();
+            if hashes > 0 {
+                let rest: String = line.chars().skip(hashes).collect();
+                if !rest.is_empty() && !rest.starts_with(' ') {
+                    line = format!("{} {}", "#".repeat(hashes), rest);
+                    changed += 1;
+                }
+            }
+        }
+        if o.list_marker {
+            let lead = line.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+            let rest: String = line.chars().skip(lead).collect();
+            let marker = rest.chars().next();
+            if matches!(marker, Some('*') | Some('+')) && rest.chars().nth(1) == Some(' ') {
+                let body: String = rest.chars().skip(2).collect();
+                line = format!("{}- {}", &line[..lead], body);
+                changed += 1;
+            }
+        }
+        if o.trim_end {
+            let trimmed = line.trim_end_matches(is_pad).to_owned();
+            if trimmed != line {
+                changed += 1;
+                line = trimmed;
+            }
+        }
+        if o.cjk_space {
+            let (spaced, delta) = spacing_line(
+                &line,
+                &SpacingOptions {
+                    cjk_latin: true,
+                    cjk_digit: true,
+                    squeeze_spaces: false,
+                    trim_end: false,
+                    indent: 0,
+                    skip_code: true,
+                },
+            );
+            changed += delta;
+            line = spaced;
+        }
+        // 围栏行之后的空行（收尾）
+        out.push(line);
+    }
+
+    let trailing = lines.last().is_some_and(|(_, t)| !t.is_empty());
+    let mut text = join_lines(&out, term, trailing);
+    if o.final_newline && !text.is_empty() && !text.ends_with('\n') && !text.ends_with('\r') {
+        text.push_str(term);
+        changed += 1;
+    }
+    note_outcome(text, changed, format!("技术文档排版 {changed} 处"))
+}
+
+/// 片段处理：把原来散在菜单里的行级细项按顺序串起来
+fn snippet_process(text: &str, o: &SnippetOptions) -> StepOutcome {
+    let mut current = text.to_owned();
+    let mut changed_total = 0usize;
+    let mut notes: Vec<String> = Vec::new();
+
+    // 用宏而不是闭包：闭包会一直持有 `current` 的可变借用，
+    // 而每一步都要先「读 current」再「写回 current」，借用会打架。
+    macro_rules! apply {
+        ($outcome:expr, $label:expr) => {{
+            let outcome = $outcome;
+            if outcome.changed > 0 {
+                notes.push(format!("{} {}", $label, outcome.changed));
+            }
+            changed_total += outcome.changed;
+            current = outcome.text;
+        }};
+    }
+
+    if o.trim_head || o.trim_end {
+        apply!(trim_lines(&current, o.trim_end, o.trim_head), "清理空格");
+    }
+    if o.remove_half_width {
+        apply!(
+            remove_half_width(&current, &HalfWidthOptions { mode: o.half_width_mode }),
+            "删除半角"
+        );
+    }
+    if o.remove_empty {
+        apply!(remove_empty_lines(&current), "删除空行");
+    }
+    if o.dedup {
+        apply!(dedup_lines(&current, &DedupOptions::default()), "去重");
+    }
+    if o.sort {
+        apply!(
+            sort_lines(
+                &current,
+                &SortLinesOptions {
+                    mode: o.sort_mode,
+                    ignore_surrounding_space: false,
+                },
+            ),
+            "排序"
+        );
+    }
+    if o.join_lines {
+        apply!(
+            remove_intra_line_breaks(&current, &IntraLineOptions::default()),
+            "合并段内回车"
+        );
+    }
+    if o.insert_blank {
+        apply!(insert_blank_between(&current), "段间空行");
+    }
+
+    if notes.is_empty() {
+        notes.push("没有需要处理的片段".to_owned());
+    }
+    note_outcome(current, changed_total, notes.join("；"))
+}
+
+// ---------------------------------------------------------------------------
 // 单测
 // ---------------------------------------------------------------------------
 
@@ -1653,14 +2396,15 @@ mod tests {
 
     // ---- 目录与序列化 ----
 
+    /// 菜单上露出的项（v0.9 起是精选的 11 项）
     #[test]
     fn catalog_covers_every_step_kind() {
         let metas = catalog();
-        assert_eq!(metas.len(), 18, "整理工具应为 18 个");
+        assert_eq!(metas.len(), 11, "菜单上应露出 11 项");
         let mut ids: Vec<&str> = metas.iter().map(|m| m.id.as_str()).collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), 18, "工具标识必须唯一");
+        assert_eq!(ids.len(), 11, "工具标识必须唯一");
         for id in ids {
             let step = from_id(id).expect("目录中的标识必须可构造");
             assert_eq!(step.id(), id);
@@ -1670,6 +2414,30 @@ mod tests {
                 Some(id),
                 "serde kind 与 id 不一致：{id}"
             );
+        }
+    }
+
+    /// 收进工具内部的步骤（片段处理 / 规范标点用得到，批处理 F-08 也会选）
+    /// 必须照样能构造出来 —— 菜单不露出 ≠ 能力被删掉。
+    #[test]
+    fn internal_steps_are_still_constructible() {
+        for id in [
+            "trim_line_head",
+            "trim_line_end",
+            "dedup_lines",
+            "sort_lines",
+            "remove_half_width",
+            "normalize_line_head",
+            "remove_intra_line_breaks",
+            "auto_segment",
+            "control_width",
+            "match_brackets",
+            "fix_brackets",
+            "half_quote_to_full",
+            "vertical_to_horizontal",
+        ] {
+            let step = from_id(id).unwrap_or_else(|_| panic!("{id} 必须可构造"));
+            assert_eq!(step.id(), id);
         }
     }
 
@@ -1696,6 +2464,119 @@ mod tests {
             other => panic!("解析结果不对：{other:?}"),
         }
         assert!(serde_json::from_str::<PipelineStep>(r#"{"kind":"nope"}"#).is_err());
+    }
+
+    // ---- v0.9 排版类工具 ----
+
+    #[test]
+    fn normalize_punctuation_follows_gb_t_15834() {
+        // 引号配对 + 省略号 + 破折号 + 半角标点（挨着中文的）转全角
+        assert_eq!(
+            by_id("normalize_punctuation", "他说\"你好\",真的吗?"),
+            "他说“你好”，真的吗？"
+        );
+        assert_eq!(by_id("normalize_punctuation", "等等..."), "等等……");
+        assert_eq!(by_id("normalize_punctuation", "他--走了"), "他——走了");
+        // 英文句子里的半角标点不动
+        assert_eq!(by_id("normalize_punctuation", "hello, world"), "hello, world");
+        // 竖排符号横转
+        assert_eq!(by_id("normalize_punctuation", "甲︐乙"), "甲，乙");
+    }
+
+    #[test]
+    fn normalize_punctuation_is_idempotent() {
+        let sample = "他说\"你好\"...真的吗?他--走了\n甲︐乙";
+        let once = by_id("normalize_punctuation", sample);
+        assert_eq!(by_id("normalize_punctuation", &once), once);
+    }
+
+    #[test]
+    fn web_novel_layout_adds_spaces_and_indent() {
+        // 只补空格、不动缩进
+        let no_indent = run(
+            PipelineStep::WebNovelLayout(SpacingOptions {
+                indent: 0,
+                ..SpacingOptions::default()
+            }),
+            "中文abc混合",
+        );
+        assert_eq!(no_indent, "中文 abc 混合");
+        // 段首缩进（全角空格 ×2）+ 中数之间补空格
+        assert_eq!(by_id("web_novel_layout", "第1章"), "\u{3000}\u{3000}第 1 章");
+    }
+
+    #[test]
+    fn web_novel_layout_leaves_urls_and_code_alone() {
+        let text = "见 https://a.com/x?y=1 与 `中文abc` 内";
+        let out = run(
+            PipelineStep::WebNovelLayout(SpacingOptions {
+                indent: 0,
+                ..SpacingOptions::default()
+            }),
+            text,
+        );
+        assert_eq!(out, text);
+    }
+
+    #[test]
+    fn web_novel_layout_is_idempotent() {
+        let sample = "第1章 中文abc\n第二行def";
+        let once = by_id("web_novel_layout", sample);
+        assert_eq!(by_id("web_novel_layout", &once), once, "缩进不该越加越多");
+    }
+
+    #[test]
+    fn chinese_copywriting_normalizes_text() {
+        // 中英空格 + 标点后不留空格 + 重复标点合并 + 数字与单位
+        assert_eq!(
+            by_id("chinese_copywriting", "中文， abc！！重量100kg"),
+            "中文，abc！重量 100 kg"
+        );
+        assert_eq!(by_id("chinese_copywriting", "等等..."), "等等……");
+        // 不该把 kilogram 切成 kg ram
+        assert_eq!(by_id("chinese_copywriting", "100kilogram"), "100kilogram");
+    }
+
+    #[test]
+    fn chinese_copywriting_is_idempotent() {
+        let sample = "中文， abc！！重量100kg...嗯--好";
+        let once = by_id("chinese_copywriting", sample);
+        assert_eq!(by_id("chinese_copywriting", &once), once);
+    }
+
+    #[test]
+    fn tech_doc_layout_normalizes_markdown() {
+        let text = "#标题\n* 项目\n```\ncode中文\n```\n";
+        let out = by_id("tech_doc_layout", text);
+        assert_eq!(out, "# 标题\n- 项目\n\n```\ncode中文\n\n```\n");
+    }
+
+    #[test]
+    fn tech_doc_layout_is_idempotent() {
+        let sample = "#标题\n* 项目\n```\ncode中文\n```\n";
+        let once = by_id("tech_doc_layout", sample);
+        assert_eq!(by_id("tech_doc_layout", &once), once);
+    }
+
+    #[test]
+    fn snippet_process_combines_line_steps() {
+        // 默认：清理行首行末 + 删除空行
+        assert_eq!(by_id("snippet_process", "  b  \n  a  \n\nb"), "b\na\nb");
+        // 去重 + 排序（默认选项关着，这里显式打开）
+        let opts = SnippetOptions {
+            dedup: true,
+            sort: true,
+            ..SnippetOptions::default()
+        };
+        assert_eq!(
+            run(PipelineStep::SnippetProcess(opts), "b\na\nb"),
+            "a\nb"
+        );
+    }
+
+    #[test]
+    fn trim_both_clears_head_and_tail() {
+        assert_eq!(by_id("trim_both", "  a  \n\u{3000}b\t"), "a\nb");
     }
 
     #[test]

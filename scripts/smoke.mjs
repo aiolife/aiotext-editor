@@ -231,39 +231,60 @@ try {
     if (conv.exceptionDetails) throw new Error(`转换求值异常：${conv.exceptionDetails.text}`);
     const converted = conv.result.value;
 
-    // PRD v0.5 §3.5：「功能」菜单 = 常用 6 个转换方向**直接点**（不套二级菜单）
-    // + 18 个整理工具按后端目录分 4 组。这条断言盯的是结构不回退——
-    // 谁再把方向塞回二级菜单、或把工具分组拍平，这里立刻红。
-    const func = await cdp.send('Runtime.evaluate', {
+    // v0.9 菜单结构：「简繁」= 6 个转换方向直接点（不套二级菜单）+ 转换预览…；
+    // 「排版」= 5 个排版类工具 + 6 个高频直点项，分「排版规范 / 常用」两组。
+    // 这条断言盯的是结构不回退——谁再把方向塞回二级菜单、
+    // 或把排版菜单拍平 / 塞回 18 个细项，这里立刻红。
+    const menuProbe = await cdp.send('Runtime.evaluate', {
       expression: `(async () => {
         const tick = () => new Promise((r) => setTimeout(r, 80));
-        const trigger = [...document.querySelectorAll('header .menubar-trigger')]
-          .find((e) => e.textContent.trim() === '功能');
-        if (!trigger) return { ok: false, reason: '顶栏没有「功能」入口' };
-        trigger.click();
-        await tick();
-        const panel = trigger.parentElement.querySelector('.menu-panel');
-        if (!panel) return { ok: false, reason: '「功能」菜单没展开' };
-        // 第一条分隔线之前 = 直接可点的转换方向（PRD v0.5 §3.5：恰好 6 个）
+        const openMenu = async (label) => {
+          const t = [...document.querySelectorAll('header .menubar-trigger')]
+            .find((e) => e.textContent.trim() === label);
+          if (!t) return null;
+          t.click();
+          await tick();
+          const panel = t.parentElement?.querySelector('.menu-panel');
+          return panel ? { t, panel } : null;
+        };
+
+        // ---- 简繁 ----
+        const conv = await openMenu('简繁');
+        if (!conv) return { ok: false, reason: '顶栏没有「简繁」入口' };
+        // 第一条分隔线之前 = 直接可点的转换方向（恰好 6 个）。
         // 注意不能靠「含『简』且含『繁』」去筛标签：台湾那两项是
         // 「简体 → 台湾正体…」/「台湾正体 → 简体…」，标签里没有「繁」字，会被漏掉。
         const directions = [];
-        for (const el of panel.children) {
+        for (const el of conv.panel.children) {
           if (el.classList.contains('menu-sep')) break;
           if (el.classList.contains('menu-item')) directions.push(el.textContent.trim());
         }
-        const groups = [...panel.querySelectorAll('.menu-group-title')]
-          .map((e) => e.textContent.trim())
-          .filter((g) => g !== '其他转换');
-        const subs = panel.querySelectorAll('.menu-sub').length;
-        trigger.click(); // 收起，别挡住后面的断言
-        return { ok: true, directions, groups, subs };
+        const hasPreview = [...conv.panel.querySelectorAll('.menu-item')].some(
+          (e) => e.textContent.trim() === '转换预览…',
+        );
+        const subs = conv.panel.querySelectorAll('.menu-sub').length;
+        conv.t.click(); // 收起，别挡住后面的断言
+        await tick();
+
+        // ---- 排版 ----
+        const layout = await openMenu('排版');
+        if (!layout) return { ok: false, reason: '顶栏没有「排版」入口' };
+        const groups = [...layout.panel.querySelectorAll('.menu-group-title')].map((e) =>
+          e.textContent.trim(),
+        );
+        const items = [...layout.panel.querySelectorAll('.menu-item')].map((e) =>
+          e.textContent.replace(/…$/, '').trim(),
+        );
+        layout.t.click();
+        return { ok: true, directions, hasPreview, subs, groups, items };
       })()`,
       returnByValue: true,
       awaitPromise: true,
     });
-    if (func.exceptionDetails) throw new Error(`菜单求值异常：${func.exceptionDetails.text}`);
-    const funcMenu = func.result.value;
+    if (menuProbe.exceptionDetails) {
+      throw new Error(`菜单求值异常：${menuProbe.exceptionDetails.text}`);
+    }
+    const menu = menuProbe.result.value;
 
     // v0.5：文件 / 编辑 新增的二级菜单（编码转换 / 重新载入 / 自定义替换）
     // + 保存回归（截图里的 `unknown variant 'utf-8'` 曾让保存必失败）
@@ -334,16 +355,22 @@ try {
     // 拿它当期望值会把「配置差异」误报成「词典坏了」。
     check('OpenCC 繁→简可用', typeof converted?.t2s === 'string' && converted.t2s.includes('汉'), converted?.t2s);
     check(
-      '功能菜单：常用 6 个转换方向直接可点',
-      funcMenu?.ok === true && funcMenu.directions.length === 6,
-      funcMenu?.ok ? `${funcMenu.directions.length} 个：${funcMenu.directions.join(' / ')}` : funcMenu?.reason,
+      '简繁菜单：6 个转换方向直接可点',
+      menu?.ok === true && menu.directions.length === 6,
+      menu?.ok ? `${menu.directions.length} 个：${menu.directions.join(' / ')}` : menu?.reason,
+    );
+    check('简繁菜单：带「转换预览…」', menu?.hasPreview === true);
+    check('简繁菜单：转换方向不再套二级菜单', menu?.subs === 0, `${menu?.subs} 个二级菜单`);
+    check(
+      '排版菜单：5 个排版类工具 + 6 个常用项',
+      menu?.items?.length === 11,
+      menu?.items?.join(' / ') ?? '',
     );
     check(
-      '功能菜单：整理工具分 4 组',
-      funcMenu?.groups?.length === 4,
-      funcMenu?.groups?.join(' / ') ?? '',
+      '排版菜单：分「排版规范 / 常用」两组',
+      menu?.groups?.join(' / ') === '排版规范 / 常用',
+      menu?.groups?.join(' / ') ?? '',
     );
-    check('功能菜单：转换方向不再套二级菜单', funcMenu?.subs === 0, `${funcMenu?.subs} 个二级菜单`);
     check(
       '文件 → 编码转换 ▸ 有 4 个目标编码',
       extras?.convert?.ok === true && extras.convert.items.length === 4,
@@ -835,6 +862,48 @@ try {
     );
 
     check('无页面运行时错误', errors.length === 0, errors.length ? errors.map((e) => e.method).join(',') : 'none');
+
+    // v0.9：关掉所有标签之后，编辑区必须是一片空白 —— 不塞欢迎语、不塞功能介绍。
+    // 这条断言盯的是「空白页又被塞回东西」这类回退。
+    const emptyState = await evaluate(`(async () => {
+      const tick = () => new Promise((r) => setTimeout(r, 150));
+      const trigger = (label) =>
+        [...document.querySelectorAll('header .menubar-trigger')].find((e) => e.textContent.trim() === label);
+      const clickItem = (text) => {
+        const panel = document.querySelector('.menu-panel');
+        const item = [...(panel?.querySelectorAll('.menu-item') ?? [])].find((e) =>
+          e.textContent.includes(text),
+        );
+        if (item) item.click();
+        return !!item;
+      };
+      const t = trigger('文件');
+      if (!t) return { ok: false, reason: '顶栏没有「文件」' };
+      t.click();
+      await tick();
+      const clicked = clickItem('全部关闭');
+      await tick();
+      // 有未保存内容时会弹确认对话框：选「（全部）不保存」
+      const discard = document.querySelector('.dialog-danger');
+      if (discard) {
+        discard.click();
+        await tick();
+      }
+      const ph = document.querySelector('.app-placeholder');
+      return {
+        ok: clicked,
+        editorGone: !document.querySelector('.cm-content'),
+        hasPlaceholder: !!ph,
+        text: ph ? ph.textContent.trim() : '',
+      };
+    })()`);
+    check(
+      '关掉所有标签后编辑区留白（不显示任何文字）',
+      emptyState?.hasPlaceholder === true && emptyState.text === '',
+      emptyState?.hasPlaceholder
+        ? `空白区文字 ${emptyState.text.length} 字 · 编辑器已卸载 ${emptyState.editorGone}`
+        : JSON.stringify(emptyState),
+    );
 
     // 冒烟在文档里灌了几十 K 字符、还留着未保存标签，跑完把会话抹掉，别污染用户的下次启动
     if (process.platform === 'win32' && process.env.APPDATA) {

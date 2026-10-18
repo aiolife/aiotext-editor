@@ -1,8 +1,9 @@
 /**
- * 顶栏菜单栏：`文件 / 编辑 / 功能 / 视图 / 帮助` 五个**纯文字**菜单（PRD v0.5 §3.5）。
+ * 顶栏菜单栏：`文件 / 编辑 / 简繁 / 排版 / 视图 / 帮助` 六个**纯文字**菜单（PRD v0.5 §3.5）。
  *
- * 「功能」是照 `04-ui-ux §2.5` 的形态还原的：**常用 6 个转换方向直接点**（不套二级菜单），
- * 其余 11 种收进 `其他转换 ▸`；18 个整理工具按后端 catalog 的顺序分 4 组铺在菜单下半部分。
+ * 「简繁」只装简繁转换（6 个方向直接点，不套二级菜单）与「转换预览…」；
+ * 「排版」装文本整理：v0.9 起是 5 个排版类工具 + 6 个高频直点项，
+ * 更早那 18 个细项收进了「规范标点 / 片段处理」的选项里。
  *
  * ## 为什么菜单项不各自写死行为
  *
@@ -337,10 +338,10 @@ export function MenuBar({
     </>
   );
 
-  // ---------- 功能 ----------
+  // ---------- 简繁 ----------
 
   /**
-   * 转换方向项。常用 6 个**直接点**（不再套一层二级菜单）；
+   * 转换方向项。6 个方向**直接点**（不套二级菜单）；
    * 其中 `s2t` / `t2s` 有默认键位，右侧照样按用户当前绑定显示。
    */
   const directionItem = (direction: OpenccDirectionMeta) =>
@@ -348,13 +349,24 @@ export function MenuBar({
       more: accelOf(`convert.${direction.id}`) ?? undefined,
     });
 
-  const funcMenu = (
+  const convertMenu = (
     <>
       {directions.map(directionItem)}
       <div className="menu-sep" />
       {plainItem('convert-dialog', '转换预览…', !convertDisabled, actions.convertDialog)}
-      <div className="menu-sep" />
-      {/* 18 个工具：按后端 catalog 的顺序分 4 组，组间分隔线（不重排） */}
+    </>
+  );
+
+  // ---------- 排版 ----------
+
+  /**
+   * 排版菜单：5 个排版类工具 + 6 个高频直点项，顺序取自后端 catalog 的分组。
+   *
+   * v0.9 之前这里塞了 18 个细项，找功能要翻半天；现在细项收进了
+   * 「规范标点 / 片段处理」的选项里，菜单只留下「一眼能找到」的入口。
+   */
+  const layoutMenu = (
+    <>
       {toolGroups.map((group, index) => (
         <div key={group.name}>
           {index > 0 && <div className="menu-sep" />}
@@ -407,8 +419,9 @@ export function MenuBar({
   const menus: { id: string; label: string; panel: React.ReactNode; wide?: boolean }[] = [
     { id: 'file', label: '文件', panel: fileMenu },
     { id: 'edit', label: '编辑', panel: editMenu },
-    // 功能菜单装 6 个转换方向 + 18 个工具，是最长的一个 → 限高滚动
-    { id: 'func', label: '功能', panel: funcMenu, wide: true },
+    { id: 'convert', label: '简繁', panel: convertMenu },
+    // 排版菜单放 5 个排版工具 + 常用项，是最长的一个 → 限高滚动
+    { id: 'layout', label: '排版', panel: layoutMenu, wide: true },
     { id: 'view', label: '视图', panel: viewMenu },
     { id: 'help', label: '帮助', panel: helpMenu },
   ];

@@ -26,7 +26,9 @@ fn keys(value: &Value) -> Vec<String> {
 #[test]
 fn catalog_matches_frontend_tool_meta_shape() {
     let metas: Vec<ToolMeta> = pipelines::catalog();
-    assert_eq!(metas.len(), 18, "F-09 共 18 个工具");
+    // v0.9：菜单只露出「5 个排版类工具 + 6 个高频直点项」，
+    // 其余步骤收进了工具内部（仍可用 `from_id` 构造，批处理照旧选得到）。
+    assert_eq!(metas.len(), 11, "菜单上应露出 11 项");
 
     let value = serde_json::to_value(&metas).expect("目录应可序列化");
     let first = &value[0];
@@ -36,17 +38,30 @@ fn catalog_matches_frontend_tool_meta_shape() {
         "ToolMeta 字段必须与前端 TS 接口一致（camelCase）"
     );
 
-    // 分组与「只检查」标记必须真实存在，前端据此渲染分隔标题与提示
+    // 分组必须真实存在，前端据此渲染分隔标题
     let groups: Vec<&str> = metas.iter().map(|m| m.group.as_str()).collect();
-    for expected in ["行处理", "空格与全半角", "标点与括号", "排版与分段"] {
+    for expected in ["排版规范", "常用"] {
         assert!(groups.contains(&expected), "缺少分组：{expected}");
     }
-    let inspects: Vec<&str> = metas
-        .iter()
-        .filter(|m| m.inspects_only)
-        .map(|m| m.id.as_str())
-        .collect();
-    assert_eq!(inspects, vec!["match_brackets"], "只有匹配括号是纯检查型");
+    // 五个排版类工具都要在目录里，且都可带选项
+    for id in [
+        "normalize_punctuation",
+        "web_novel_layout",
+        "chinese_copywriting",
+        "tech_doc_layout",
+        "snippet_process",
+    ] {
+        let meta = metas
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap_or_else(|| panic!("目录里应有 {id}"));
+        assert!(meta.has_options, "{id} 应带可调选项");
+    }
+    // 纯检查型（匹配括号）已收进「规范标点」，目录里不再有独立项
+    assert!(
+        metas.iter().all(|m| !m.inspects_only),
+        "目录里不应再有纯检查项：它们只是规范标点的一项检查"
+    );
 }
 
 #[test]

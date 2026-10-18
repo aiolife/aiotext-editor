@@ -84,6 +84,45 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 /** 有未落盘的改动 */
 let dirty = false;
 
+/**
+ * 上一次生效的设置（首帧先用它，别让界面「先默认样式再跳一下」）
+ *
+ * 设置是从后端读的（`settings_get` 一次 IPC），回来之前 store 只能给默认值：
+ * 于是深色主题的用户会先看到一帧浅色界面，字体 / 字号也要跳一次 —— 这种
+ * 闪动很容易被当成「启动慢」。把上次读到的值缓存进 localStorage，首帧就按
+ * 它渲染，异步回来后再校正（`load()` 里照样覆盖）。
+ *
+ * 缓存只影响观感，不影响正确性：读不到、解析失败、字段缺失都退回默认值。
+ */
+const CACHE_KEY = 'aiotext.settings.cache.v1';
+
+function readCache(): Settings {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    const saved = JSON.parse(raw) as Partial<Settings>;
+    return {
+      ...DEFAULT_SETTINGS,
+      ...saved,
+      appearance: { ...DEFAULT_SETTINGS.appearance, ...saved.appearance },
+      editor: { ...DEFAULT_SETTINGS.editor, ...saved.editor },
+      conversion: { ...DEFAULT_SETTINGS.conversion, ...saved.conversion },
+      compare: { ...DEFAULT_SETTINGS.compare, ...saved.compare },
+      shortcuts: saved.shortcuts ?? {},
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function writeCache(settings: Settings): void {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(settings));
+  } catch {
+    // 隐私模式 / 配额满：缓存写不进去无所谓，下次首帧退回默认值即可
+  }
+}
+
 function cancelPendingSave(): void {
   if (saveTimer !== null) {
     clearTimeout(saveTimer);
@@ -93,16 +132,21 @@ function cancelPendingSave(): void {
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  settings: DEFAULT_SETTINGS,
+  // 首帧就用上次的设置（没有则用默认值），见 `readCache` 的说明
+  settings: readCache(),
   loaded: false,
   saveError: null,
   saving: false,
 
-  applyServerValue: (s) => set({ settings: s }),
+  applyServerValue: (s) => {
+    writeCache(s);
+    set({ settings: s });
+  },
 
   load: async () => {
     try {
       const s = await settingsGet();
+      writeCache(s);
       set({ settings: s, loaded: true, saveError: null });
     } catch (e) {
       set({
