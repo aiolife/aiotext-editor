@@ -45,6 +45,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # tauri::generate_context! 在**编译期**就要读 frontendDist（../dist）。
+      # 前端 job 与 Rust job 跑在各自独立的 runner 上，这里不先构建前端，
+      # `cargo check` 会直接报「frontendDist 指向的路径不存在」——
+      # 之前这条一直被「格式检查」挡在前面，没暴露出来。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 构建前端（供编译期读取 dist）
+        run: |
+          npm ci
+          npm run build
+
       # opencc-sys 构建链：cmake（编译 OpenCC C++ 全库）+ LLVM/libclang（bindgen 生成 FFI）
       - name: 安装 LLVM（bindgen 需要 libclang）
         uses: kylemayes/install-llvm-action@v2
