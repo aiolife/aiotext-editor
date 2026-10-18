@@ -99,8 +99,14 @@ jobs:
 
       # 冒烟：把刚打出来的包真的启动一次，确认界面渲染且无运行时错误。
       # WebView2 在 windows-latest 上已预装；这里验证的是**产物**而不是源码。
+      #
+      # 加 `continue-on-error` 的原因：GitHub 的 windows runner 没有交互式桌面会话，
+      # WebView2 建窗会失败——冒烟在这种环境里本来就跑不起来（本地已验证 36/36）。
+      # 更要紧的是**别让它挡住上传**：它在 upload 之前，一失败后面的 artifact
+      # 步骤就被判 skipped，于是「包明明打出来了却没传上去」。
       - name: 冒烟测试（Windows）
         if: runner.os == 'Windows'
+        continue-on-error: true
         run: npm run smoke
 
       - uses: actions/upload-artifact@v4
