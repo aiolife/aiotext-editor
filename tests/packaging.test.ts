@@ -206,8 +206,11 @@ describe('三平台各一个安装文件', () => {
     expect(macosConf.bundle.targets).toEqual(['dmg']);
   });
 
-  it('Linux 只出 AppImage（一个自包含可执行文件）', () => {
-    expect(linuxConf.bundle.targets).toEqual(['appimage']);
+  it('Linux 只出 deb（Debian / Ubuntu 系的标准安装包）', () => {
+    // v0.9：原来这里要求 AppImage。AppImage 需要额外下载 linuxdeploy 及其插件，
+    // 在 CI 上属于最容易翻车的一环（第一版三平台发布就挂在它上面）；
+    // deb 由 Tauri 直接生成，依赖更少，也是这两个发行版用户真正会用的格式。
+    expect(linuxConf.bundle.targets).toEqual(['deb']);
   });
 
   it('每个平台都显式收窄 targets，不允许回退到基线的 "all"', () => {

@@ -221,13 +221,16 @@ describe('键位显示', () => {
 
 describe('绑定解析（覆盖表三态）', () => {
   it('缺键 → 默认；空串 → 解绑；非空 → 覆盖', () => {
+    // 默认键位跟着平台走（macOS 是 ⌘N，其余是 Ctrl+N），不能写死：
+    // 这里写死过一次，CI 上 macOS 的前端单测就一直是红的。
+    const defaultNew = commandById('file.new')!.defaultKey!;
     const b = resolveBindings({
       'file.save': 'ctrl+alt+1',
       'file.open': '',
     });
     expect(b.get('file.save')).toEqual({ command: 'file.save', key: 'ctrl+alt+1', source: 'custom' });
     expect(b.get('file.open')).toEqual({ command: 'file.open', key: null, source: 'unbound' });
-    expect(b.get('file.new')).toEqual({ command: 'file.new', key: 'ctrl+n', source: 'default' });
+    expect(b.get('file.new')).toEqual({ command: 'file.new', key: defaultNew, source: 'default' });
     // 显式解绑的空值即便带空白也算解绑
     const spaced = resolveBindings({ 'file.save': '   ' });
     expect(spaced.get('file.save')?.key).toBeNull();
@@ -241,7 +244,11 @@ describe('绑定解析（覆盖表三态）', () => {
 
   it('无法解析的覆盖值回落默认，而不是静默丢成未绑定', () => {
     const b = resolveBindings({ 'file.save': 'Ctrl+Shift+Alt+Meta' });
-    expect(b.get('file.save')).toEqual({ command: 'file.save', key: 'ctrl+s', source: 'default' });
+    expect(b.get('file.save')).toEqual({
+      command: 'file.save',
+      key: commandById('file.save')!.defaultKey!,
+      source: 'default',
+    });
   });
 
   it('未知命令 ID 被忽略（设置文件里残留的旧命令）', () => {
@@ -252,34 +259,38 @@ describe('绑定解析（覆盖表三态）', () => {
 });
 
 describe('冲突检测', () => {
+  // 造冲突要靠「新建」的**当前平台**默认键：macOS 是 ⌘N、其余是 Ctrl+N。
+  // 写死 Ctrl+N 的话，macOS 上这个键根本没人占，冲突就造不出来了。
+  const newKey = (): string => commandById('file.new')!.defaultKey!;
+
   it('覆盖成同一个键 → 报冲突', () => {
-    const b = resolveBindings({ 'file.open': 'ctrl+n' });
+    const b = resolveBindings({ 'file.open': newKey() });
     const conflicts = findConflicts(b);
     expect(conflicts).toHaveLength(1);
-    expect(conflicts[0].key).toBe('ctrl+n');
+    expect(conflicts[0].key).toBe(newKey());
     expect(conflicts[0].commands).toEqual(['file.new', 'file.open']);
   });
 
   it('三个命令抢同一个键也算一处冲突', () => {
-    const b = resolveBindings({ 'file.open': 'ctrl+n', 'file.save': 'ctrl+n' });
+    const b = resolveBindings({ 'file.open': newKey(), 'file.save': newKey() });
     expect(findConflicts(b)[0].commands).toEqual(['file.new', 'file.open', 'file.save']);
   });
 
   it('解绑后不再冲突（冲突消失）', () => {
-    const b = resolveBindings({ 'file.open': 'ctrl+n', 'file.new': '' });
+    const b = resolveBindings({ 'file.open': newKey(), 'file.new': '' });
     expect(findConflicts(b)).toEqual([]);
   });
 
   it('conflictsWith 排除自己，并吸收大小写写法', () => {
     const b = resolveBindings({});
-    // 把「打开」挪到 Ctrl+N：与「新建」撞车
-    expect(conflictsWith(b, 'file.open', 'ctrl+n')).toEqual(['file.new']);
+    // 把「打开」挪到「新建」的键上：与「新建」撞车
+    expect(conflictsWith(b, 'file.open', newKey())).toEqual(['file.new']);
     // 大小写不影响判定
-    expect(conflictsWith(b, 'file.open', 'CTRL+N')).toEqual(['file.new']);
+    expect(conflictsWith(b, 'file.open', newKey().toUpperCase())).toEqual(['file.new']);
     // 没人占用的键
     expect(conflictsWith(b, 'file.open', 'ctrl+9')).toEqual([]);
-    // 「新建」占着自己的默认键 Ctrl+N：自己不算冲突
-    expect(conflictsWith(b, 'file.new', 'ctrl+n')).toEqual([]);
+    // 「新建」占着自己的默认键：自己不算冲突
+    expect(conflictsWith(b, 'file.new', newKey())).toEqual([]);
     // 无法解析的值不报冲突
     expect(conflictsWith(b, 'file.open', 'Ctrl+Shift')).toEqual([]);
   });

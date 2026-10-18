@@ -56,8 +56,23 @@ const IS_MAC = isMacPlatform();
 /** 主修饰键的规范名（`ctrl` 或 `meta`） */
 const MOD: Modifier = IS_MAC ? 'meta' : 'ctrl';
 
-/** 拼一个用主修饰键的默认键位 */
-const mod = (rest: string): string => `${MOD}+${rest}`;
+/**
+ * 拼一个用主修饰键的默认键位。
+ *
+ * 键位必须是**规范形式**：修饰键按 `MODIFIER_ORDER`（ctrl→alt→shift→meta）排列。
+ * 主修饰键在 macOS 是 `meta`、其余是 `ctrl`，而 `meta` 在 ORDER 里排**最后** ——
+ * 所以 macOS 下不能拼成 `meta+shift+s`，得排成 `shift+meta+s`。
+ *
+ * 这里按 ORDER 排好再返回：注册表里若出现「写得出来却解析不回自身」的键位，
+ * 自定义覆盖表在 macOS 上就会静默失效（这条在 CI 上吃过亏——macOS 的
+ * 前端单测因为 `file.saveAs` 的默认键位不是规范形式而一直红）。
+ */
+const mod = (rest: string): string => {
+  const parts = rest.split('+').map((p) => p.trim().toLowerCase());
+  const main = parts[parts.length - 1];
+  const mods = new Set<string>([MOD, ...parts.slice(0, -1)]);
+  return [...MODIFIER_ORDER.filter((m) => mods.has(m)), main].join('+');
+};
 
 /**
  * 命令注册表。

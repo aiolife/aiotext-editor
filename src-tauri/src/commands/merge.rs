@@ -287,7 +287,12 @@ mod tests {
 
     #[test]
     fn file_name_extracts_base() {
-        assert_eq!(file_name(r"C:\dir\1_2.txt"), "1_2.txt");
+        // 这条用例原本写死 `C:\dir\1_2.txt`：`Path::file_name()` 的分隔符是
+        // **平台相关**的，Linux / macOS 不认 `\`，整个串会被当成文件名返回，
+        // 于是 CI 上 macOS 的 Rust 单测一直是红的（Windows 恰好通过）。
+        // 现在按当前平台的分隔符现场构造，跨平台都成立。
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(file_name(&format!("dir{sep}1_2.txt")), "1_2.txt");
         assert_eq!(file_name("/tmp/x/甲.txt"), "甲.txt");
         assert_eq!(file_name("plain.txt"), "plain.txt");
     }

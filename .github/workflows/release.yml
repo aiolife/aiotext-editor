@@ -55,7 +55,11 @@ jobs:
           cache: npm
 
       # opencc-sys 构建链：cmake（编译 OpenCC C++ 全库）+ LLVM/libclang（bindgen 生成 FFI）
+      # 同 ci.yml：Linux 不用这个 action —— 它装的 LLVM 18 依赖 libtinfo.so.5，
+      # ubuntu runner 上只有 .so.6，libclang 打不开会让 opencc-sys 的 bindgen panic。
+      # Linux 改用发行版自带的 libclang（在下面的系统依赖里装）。
       - name: 安装 LLVM（bindgen 需要 libclang）
+        if: runner.os != 'Linux'
         uses: kylemayes/install-llvm-action@v2
         with:
           version: "18"
@@ -65,6 +69,8 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
             echo "LIBCLANG_PATH=$LLVM_PATH/bin" >> "$GITHUB_ENV"
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
           else
             echo "LIBCLANG_PATH=$LLVM_PATH/lib" >> "$GITHUB_ENV"
           fi
@@ -73,7 +79,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2
+          sudo apt-get install -y cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libclang-dev
 
       # macOS 通用包要同时装两个架构的 std
       - uses: dtolnay/rust-toolchain@stable
