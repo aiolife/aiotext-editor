@@ -655,7 +655,195 @@ try {
         ? `${batchUi.titles.join(' / ')} · 文件键=${batchUi.fileBtn} · 处理键=${batchUi.hasProcess} · 编码下拉=${batchUi.selects} · 退出后关闭=${batchUi.closed}`
         : batchUi?.reason,
     );
+    // -----------------------------------------------------------------------
+    // 性能预算：打字响应与大块插入（第十阶段之后补的性能守护）
+    //
+    // 测的是「输入 → 下一帧」的真实端到端时间（含 CodeMirror 更新、React 重渲染、
+    // 状态栏计数、不可见字符 decoration 重建），不是某个函数的孤立耗时。
+    // -----------------------------------------------------------------------
+    /**
+     * 一次性灌进文档的规模（行）。
+     *
+     * 走 `execCommand('insertText')` 而不是合成 `paste` 事件：后者在本项目的
+     * WebView2 里会让页面直接崩掉（CM 读合成 `clipboardData` 那一步），
+     * 而 execCommand 是 DOM 级的真插入，代价是它按 mutation 一次同步一次 —— 规模不能太大。
+     */
+    const PERF_BIG_LINES = 2000;
+    /** 灌几轮：攒出一份「大文件」（2000 行 × 5 ≈ 160K 字符），再量打字延迟 */
+    const PERF_BULK_ROUNDS = 5;
+    /**
+     * 真正的「输入」走 CDP 的 `Input.insertText`（相当于用户在键盘上敲出来的），
+     * 页面里合成的 beforeinput / execCommand 要么是 CM 不认、要么 update 不进 store，
+     * 那样测出来的只是 CodeMirror 内部的耗时，量不到 React 侧的统计与重渲染。
+     */
+    const evaluate = (expression) =>
+      cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }).then(
+        (r) => r.result.value,
+      );
+    const big = '汉字软件测试，abc 123。\n'.repeat(PERF_BIG_LINES);
+    await evaluate(`
+      window.__perf = {
+        frame: () => new Promise((r) => {
+          const id = setTimeout(r, 200);
+          requestAnimationFrame(() => { clearTimeout(id); r(true); });
+        }),
+        focus: () => { document.querySelector('.cm-content')?.focus(); return true; },
+        han: () => Number(
+          /汉字 (\\d+)/.exec(
+            document.querySelector('.app-statusbar .statusbar-right')?.textContent ?? '',
+          )?.[1] ?? -1,
+        ),
+        panelOf: async (label) => {
+          const t = [...document.querySelectorAll('header .menubar-trigger')].find(
+            (e) => e.textContent.trim() === label,
+          );
+          if (!t) return false;
+          t.click();
+          await window.__perf.frame();
+          return true;
+        },
+        clickItem: async (text) => {
+          const panel = document.querySelector('.menu-panel');
+          const item = [...(panel?.querySelectorAll('.menu-item') ?? [])].find((e) =>
+            e.textContent.includes(text),
+          );
+          if (item) item.click();
+          await window.__perf.frame();
+          return !!item;
+        },
+        /**
+         * 埋一个「输入 → 状态栏 DOM 真的更新了」的计时器。
+         * 用 MutationObserver 而不是 setTimeout 轮询：前者在 DOM 提交的那一刻就被叫醒，
+         * 量出来的就是 React 渲染 + 全文统计的真实耗时。
+         */
+        arm: () =>
+          new Promise((resolve) => {
+            const content = document.querySelector('.cm-content');
+            const bar = document.querySelector('.app-statusbar .statusbar-right');
+            if (!content || !bar) {
+              resolve({ latency: -1, why: !content ? '没有编辑器' : '没有状态栏计数' });
+              return;
+            }
+            let inputAt = 0;
+            // CodeMirror 自己接管 beforeinput 并 preventDefault，所以 **不会** 冒出 input 事件，
+            // 锚点得挂在 beforeinput 上（这正是 CM 开始处理这次输入的那一刻）
+            const onInput = () => {
+              if (!inputAt) inputAt = performance.now();
+            };
+            content.addEventListener('beforeinput', onInput);
+            content.addEventListener('input', onInput);
+            const done = (latency) => {
+              clearTimeout(timer);
+              ob.disconnect();
+              content.removeEventListener('input', onInput);
+              content.removeEventListener('beforeinput', onInput);
+              resolve({
+                latency: Math.round(latency * 10) / 10,
+                busyMs: Math.round((inputAt ? performance.now() - inputAt : 0) * 10) / 10,
+                longTasks: Math.round(tasks),
+                longestTask: Math.round(longest),
+              });
+            };
+            // 顺便记一下这段时间里主线程有多少 >50ms 的长任务（判断时间花在 JS 还是在别处）
+            let tasks = 0;
+            let longest = 0;
+            let po = null;
+            try {
+              po = new PerformanceObserver((list) => {
+                for (const e of list.getEntries()) {
+                  tasks += e.duration;
+                  longest = Math.max(longest, e.duration);
+                }
+              });
+              po.observe({ entryTypes: ['longtask'] });
+            } catch {
+              po = null;
+            }
+            const ob = new MutationObserver(() =>
+              done(inputAt ? performance.now() - inputAt : -2 /* 没等到输入事件 */),
+            );
+            ob.observe(bar, { subtree: true, characterData: true, childList: true });
+            // 文档压根没变化时不该把测量挂死
+            const timer = setTimeout(() => done(-1), 5000);
+          }),
+      };
+      true;
+    `);
+    await evaluate('window.__perf.focus()');
+
+    const newTab = async () => {
+      await evaluate("window.__perf.panelOf('文件')");
+      await evaluate("window.__perf.clickItem('新建')");
+      await evaluate('window.__perf.focus()');
+      await evaluate('window.__perf.frame()');
+    };
+    /**
+     * 一次输入的端到端延迟：从 CodeMirror 的 `input` 事件起，
+     * 到状态栏计数**真的重算并落到 DOM**为止（中间含 React 提交与全文统计）。
+     *
+     * 全程在页面里计时（`arm()` 先埋好 observer，再让 CDP 真的插入文本），
+     * 所以不含 WebSocket 往返那种与被测对象无关的噪声。
+     */
+    const measure = async (text) => {
+      const armed = cdp.send('Runtime.evaluate', {
+        expression: 'window.__perf.arm()',
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      await evaluate('window.__perf.focus()');
+      await cdp.send('Input.insertText', { text });
+      const r = (await armed).result?.value;
+      if (r && r.latency < 0) console.log(`   ! 计时失败：${JSON.stringify(r)}`);
+      if (process.env.PERF_AB === '1' && r) {
+        console.log(`   ·   长任务 ${r.longTasks}ms（最长 ${r.longestTask}ms）· 主线程忙到 ${r.busyMs}ms`);
+      }
+      return r?.latency ?? -1;
+    };
+
+    await newTab();
+    const samples = [];
+    for (let i = 0; i < 5; i += 1) samples.push(await measure('字'));
+    samples.sort((a, b) => a - b);
+    const keySmall = Math.round(samples[Math.floor(samples.length / 2)] * 10) / 10;
+    const grewSmall = await evaluate('window.__perf.han()');
+
+    // 灌出一份大文件再打字：全文统计是 O(文档长度)，只有文档足够大才量得出差别。
+    //
+    // 注意：`bulk` 这一趟**不做断言**——它吃的是 CDP `Input.insertText` 的合成成本
+    // （实测 36K 字符要 12s，但期间主线程记录到的长任务是 **0ms**，即 JS 几乎没干活），
+    // 量出来的不是应用的编辑性能。真正有代表性的指标是下面的「大文档里单次输入」。
+    let bulk = -1;
+    for (let round = 0; round < PERF_BULK_ROUNDS; round += 1) bulk = await measure(big);
+    const grewBig = await evaluate('window.__perf.han()');
+    // 文档变大了之后，同样的单次输入要走一遍更长的全文扫描
+    const keyOnBigDoc = await measure('字');
+
+    check(
+      '性能：空文档里单次输入到状态栏刷新 < 20ms',
+      keySmall >= 0 && keySmall < 20,
+      `${keySmall}ms（文档 ${grewSmall} 汉字）`,
+    );
+    check(
+      `性能：大文档（≈${Math.round((big.length * PERF_BULK_ROUNDS) / 1000)}K 字符）里单次输入 < 15ms`,
+      keyOnBigDoc >= 0 && keyOnBigDoc < 15 && grewBig > grewSmall,
+      `${keyOnBigDoc}ms · 文档汉字 ${grewSmall} → ${grewBig}`,
+    );
+    console.log(
+      `   · 性能实测：单次输入 ${keySmall}ms（空文档） / ${keyOnBigDoc}ms` +
+        `（≈${Math.round((big.length * PERF_BULK_ROUNDS) / 1000)}K 字符文档） · ` +
+        `一次性插入 ${PERF_BIG_LINES} 行 ${bulk}ms（含 CDP 合成成本，仅供参考）`,
+    );
+
     check('无页面运行时错误', errors.length === 0, errors.length ? errors.map((e) => e.method).join(',') : 'none');
+
+    // 冒烟在文档里灌了几十 K 字符、还留着未保存标签，跑完把会话抹掉，别污染用户的下次启动
+    if (process.platform === 'win32' && process.env.APPDATA) {
+      try {
+        rmSync(path.join(process.env.APPDATA, 'AioTextEditor', 'session.json'), { force: true });
+      } catch {
+        // 清不掉就算了，不影响结论
+      }
+    }
 
     cdp.ws.close();
     if (results.some((r) => !r.ok)) exitCode = 1;
