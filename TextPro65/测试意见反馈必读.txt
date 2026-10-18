@@ -1,4 +1,0 @@
-　　测试意见反馈必读
-    TextPro V6.5正式版下载：
-http://www.fodian.net/tools/TextPro65.rar
-　　如果发现问题，请一定要把出问题的情况写清楚，并将出问题的文件一起打包寄给我：fo-dian@163.com。以便重现出错的情形，程序员才好找到问题并改正。也可加入TextPro的QQ群：49369241
