@@ -9,7 +9,11 @@ name: Release
 # 产物（每平台一个文件）：
 #   windows-x64      target/release/bundle/nsis/AioTextEditor_<版本>_x64-setup.exe
 #   macos-universal  target/universal-apple-darwin/release/bundle/dmg/AioTextEditor_<版本>_universal.dmg
-#   linux-x64        target/release/bundle/appimage/AioTextEditor_<版本>_amd64.AppImage
+#   linux-x64        target/release/bundle/deb/AioTextEditor_<版本>_amd64.deb
+#
+# Linux 选 deb 而不是 AppImage：AppImage 要额外下载 linuxdeploy 及其插件，
+# 在 CI 上属于最容易翻车的一环（上一轮就挂在这里）；deb 由 Tauri 直接生成，
+# 依赖更少，也是 Debian / Ubuntu 用户真正会用的格式。
 
 on:
   push:
@@ -38,7 +42,7 @@ jobs:
           - name: linux-x64
             os: ubuntu-22.04
             args: ''
-            artifact: target/release/bundle/appimage/*.AppImage
+            artifact: target/release/bundle/deb/*.deb
 
     runs-on: ${{ matrix.os }}
 
