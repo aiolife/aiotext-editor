@@ -13,3 +13,4 @@ pub mod regex;
 pub mod replace;
 pub mod session;
 pub mod settings;
+pub mod text_diff;

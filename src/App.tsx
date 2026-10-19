@@ -48,6 +48,7 @@ import {
   applyPipelineStep,
   pipelinesCatalog,
   compareTexts,
+  compareDiff,
   fsRead,
   sessionLoad,
   sessionSave,
@@ -56,6 +57,7 @@ import {
   type CompareDifference,
   type CompareOptions,
   type CompareReport,
+  type DiffResult,
   type OpenccDirectionMeta,
   type SessionState,
   type PipelineStep,
@@ -273,6 +275,20 @@ export default function App() {
   const [selection, setSelection] = useState<{ tabId: string; from: number; to: number } | null>(
     null,
   );
+  /**
+   * 最近这一次选区变更是不是「程序跳过去」造成的（查找下一个 / 跳差异）。
+   *
+   * 查找面板据此决定要不要把选中的文字回填进输入框 —— 若不分来源，
+   * 用户敲好的替换词会被「跳到命中处时自动选中的那个词」顶掉。
+   */
+  const selectionByJumpRef = useRef(false);
+  const handleSelectionChange = useCallback(
+    (id: string, from: number, to: number, external?: boolean) => {
+      selectionByJumpRef.current = external === true;
+      setSelection({ tabId: id, from, to });
+    },
+    [],
+  );
   const [convertDialog, setConvertDialog] = useState<ConvertDialogCtx | null>(null);
   const [directions, setDirections] = useState<OpenccDirectionMeta[]>([]);
   // 第四阶段：查找/替换 + 替换表管理
@@ -295,7 +311,7 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   /** 外部驱动的查找面板命令（F3 / Shift+F3 / Ctrl+F / Ctrl+H）；`text` 是选区预填的文字 */
   const [searchExternal, setSearchExternal] = useState<{
-    kind: 'next' | 'prev' | 'focusFind' | 'focusReplace';
+    kind: 'next' | 'prev' | 'focusFind' | 'focusReplace' | 'fill';
     nonce: number;
     text?: string;
   } | null>(null);
@@ -312,6 +328,11 @@ export default function App() {
     target: 'a' | 'b';
   } | null>(null);
   const [compareReport, setCompareReport] = useState<CompareReport | null>(null);
+  /**
+   * 标红用的字符级差异（最小编辑脚本）。
+   * 与上面的逐字报告**并存**：F5 跳差异用逐字那份，标红用这一份 —— 各管一头。
+   */
+  const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
   const [diffIndex, setDiffIndex] = useState(-1);
   /** 差异跳转：A 侧的选区请求（独立一份，不与查找定位共用，见下方渲染） */
   const [compareSelectionA, setCompareSelectionA] = useState<SelectionRequest | null>(null);
@@ -1028,10 +1049,10 @@ export default function App() {
    */
   const diffMarks = useMemo<PaneMarks>(
     () =>
-      compare && compareReport
-        ? buildDiffMarks(compareReport.differences, compare.target)
+      compare && diffResult
+        ? buildDiffMarks(diffResult.segments, compare.target)
         : { a: [], b: [] },
-    [compare, compareReport],
+    [compare, diffResult],
   );
 
   /** 跳到某处差异：A、B 两个窗格同时定位（不抢焦点，由状态栏提示） */
@@ -1069,14 +1090,27 @@ export default function App() {
       try {
         const a = from ? aTab.content.slice(from.a) : aTab.content;
         const b = from ? bTab.content.slice(from.b) : bTab.content;
-        const report = await compareTexts(a, b, opts);
+        // F5 跳差异用逐字口径；标红另取一份最小编辑脚本（理由见 core::text_diff
+        // 的模块注释：逐字口径会把差异后面的字全染红）
+        const [report, diff] = await Promise.all([
+          compareTexts(a, b, opts),
+          // 标红失败不该拖垮整个比较：拿不到就不标，F5 照常能用
+          compareDiff(a, b, opts).catch(() => null),
+        ]);
         if (from) {
-          for (const diff of report.differences) {
-            diff.posA += from.a;
-            diff.posB += from.b;
+          for (const d of report.differences) {
+            d.posA += from.a;
+            d.posB += from.b;
+          }
+          if (diff) {
+            for (const s of diff.segments) {
+              s.posA += from.a;
+              s.posB += from.b;
+            }
           }
         }
         setCompareReport(report);
+        setDiffResult(diff);
         if (report.differences.length > 0) {
           setDiffIndex(0);
           jumpToDiff(report.differences[0]);
@@ -1145,6 +1179,7 @@ export default function App() {
   const exitCompare = useCallback(() => {
     setCompare(null);
     setCompareReport(null);
+    setDiffResult(null);
     setDiffIndex(-1);
     setCompareSelectionA(null);
     setCompareSelection(null);
@@ -1198,12 +1233,26 @@ export default function App() {
   /** 外部驱动查找面板（F3 / Shift+F3 / Ctrl+F / Ctrl+H）的序号 */
   const externalNonceRef = useRef(0);
   const driveSearch = useCallback(
-    (kind: 'next' | 'prev' | 'focusFind' | 'focusReplace', text = '') => {
+    (kind: 'next' | 'prev' | 'focusFind' | 'focusReplace' | 'fill', text = '') => {
       externalNonceRef.current += 1;
       setSearchExternal({ kind, nonce: externalNonceRef.current, text });
     },
     [],
   );
+
+  /**
+   * 查找面板开着的时候，正文里选中的文字直接补进「当前那个输入框」。
+   *
+   * 落在哪个框由面板自己定（只有它知道焦点在哪），这里守两条线：
+   * - 只认**用户自己框出来**的选区，程序跳转顺带选中的不算；
+   * - 空选区不动作 —— 点一下光标不该把框里的字清掉。
+   */
+  useEffect(() => {
+    if (!searchOpen || selectionByJumpRef.current) return;
+    const text = selectedTextRef.current;
+    if (!text) return;
+    driveSearch('fill', text);
+  }, [selectionRange, searchOpen, driveSearch]);
 
   /**
    * 命令 → 做什么。键必须是 `shortcuts.ts` 注册表里的 ID（注册表与这里的
@@ -1520,7 +1569,7 @@ export default function App() {
                 diffMarks={diffMarks.a}
                 onContentChange={setContent}
                 onCursorChange={setCursor}
-                onSelectionChange={(id, from, to) => setSelection({ tabId: id, from, to })}
+                onSelectionChange={handleSelectionChange}
                 // 查找 / 转换 / 撤销这些只作用于目标窗，别写进只读的那一格
                 pendingEdit={compare.target === 'a' ? pendingEdit : null}
                 pendingSelection={
@@ -1543,8 +1592,8 @@ export default function App() {
                 diffMarks={diffMarks.b}
                 onContentChange={setContent}
                 onCursorChange={setCursor}
-                onSelectionChange={(id, from, to) => {
-                  setSelection({ tabId: id, from, to });
+                onSelectionChange={(id, from, to, external) => {
+                  handleSelectionChange(id, from, to, external);
                   setCompareCursor(from);
                 }}
                 pendingEdit={compare.target === 'b' ? pendingEdit : null}
@@ -1561,7 +1610,7 @@ export default function App() {
             tab={activeTab}
             onContentChange={setContent}
             onCursorChange={setCursor}
-            onSelectionChange={(id, from, to) => setSelection({ tabId: id, from, to })}
+            onSelectionChange={handleSelectionChange}
             pendingEdit={pendingEdit}
             pendingSelection={pendingSelection}
             commandRequest={editorCommand}

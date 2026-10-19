@@ -182,7 +182,9 @@ fn is_half_punct(ch: char) -> bool {
     )
 }
 
-fn is_ignored(ch: char, opts: &CompareOptions) -> bool {
+// `pub(crate)`：`core::text_diff`（标红用的最小编辑脚本）要与这里共用同一套
+// 规范化口径 —— 忽略项与异体字的判定一旦两边不一致，标红的位置就会偏。
+pub(crate) fn is_ignored(ch: char, opts: &CompareOptions) -> bool {
     (opts.ignore_newlines && (ch == '\n' || ch == '\r'))
         || (opts.ignore_half_space && (ch == ' ' || ch == '\t'))
         || (opts.ignore_full_punct && is_full_punct(ch))
@@ -195,12 +197,12 @@ fn is_ignored(ch: char, opts: &CompareOptions) -> bool {
 
 /// 规范化字符的等同键：0 = 原字符本身；1 = 完全等同组；2 = 部分等同组
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CanonKey {
-    kind: u8,
-    value: u32,
+pub(crate) struct CanonKey {
+    pub(crate) kind: u8,
+    pub(crate) value: u32,
 }
 
-fn canon_key(ch: char, opts: &CompareOptions, tables: &VariantTables) -> CanonKey {
+pub(crate) fn canon_key(ch: char, opts: &CompareOptions, tables: &VariantTables) -> CanonKey {
     if opts.variant_strictness != VariantStrictness::Strict {
         if let Some(group) = tables.full_group(ch) {
             return CanonKey {
@@ -225,15 +227,15 @@ fn canon_key(ch: char, opts: &CompareOptions, tables: &VariantTables) -> CanonKe
 
 /// 一个参与比较的字符（保留原文 UTF-16 偏移与原字符，供差异报告）
 #[derive(Debug, Clone, Copy)]
-struct CanonChar {
-    key: CanonKey,
-    ch: char,
+pub(crate) struct CanonChar {
+    pub(crate) key: CanonKey,
+    pub(crate) ch: char,
     /// 原文中的 UTF-16 码元偏移
-    pos: usize,
+    pub(crate) pos: usize,
 }
 
 /// 惰性规范化流：逐字扫描原文，跳过被忽略字符
-struct CanonStream<'a> {
+pub(crate) struct CanonStream<'a> {
     rest: &'a str,
     pos: usize,
     opts: &'a CompareOptions,
@@ -241,7 +243,7 @@ struct CanonStream<'a> {
 }
 
 impl<'a> CanonStream<'a> {
-    fn new(text: &'a str, opts: &'a CompareOptions, tables: &'a VariantTables) -> Self {
+    pub(crate) fn new(text: &'a str, opts: &'a CompareOptions, tables: &'a VariantTables) -> Self {
         Self {
             rest: text,
             pos: 0,
@@ -272,7 +274,7 @@ impl Iterator for CanonStream<'_> {
     }
 }
 
-fn utf16_len(text: &str) -> usize {
+pub(crate) fn utf16_len(text: &str) -> usize {
     text.chars().map(char::len_utf16).sum()
 }
 

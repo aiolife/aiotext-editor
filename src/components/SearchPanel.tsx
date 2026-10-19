@@ -45,9 +45,12 @@ interface SearchPanelProps {
    * 查找框或替换框上——不必给面板再加一套 ref 转发。
    */
   external?: {
-    kind: 'next' | 'prev' | 'focusFind' | 'focusReplace';
+    kind: 'next' | 'prev' | 'focusFind' | 'focusReplace' | 'fill';
     nonce: number;
-    /** 要填进查找框的文字（用户在编辑器里选中了文字才带过来） */
+    /**
+     * 要带进输入框的文字（用户在正文里选了东西才带过来）。
+     * `fill` 送进**当前聚焦的那个框**；其余几种按各自的目标框。
+     */
     text?: string;
   } | null;
 }
@@ -74,6 +77,12 @@ export function SearchPanel({
   const [replaceText, setReplaceText] = useState('');
   /** 外部填入查找词后自动查找的序号（0 = 还没被填过） */
   const [autoFind, setAutoFind] = useState(0);
+  /**
+   * 「该接收选中文字」的输入框 —— 用户鼠标最后点过哪个框就是哪个。
+   *
+   * 用 ref 而不是 state：它只影响下一次回填，不值得为它重渲染整个面板。
+   */
+  const activeFieldRef = useRef<'find' | 'replace'>('find');
   /** 「使用工具」：非空时替换内容 = 该工具对命中文本的处理结果 */
   const [toolId, setToolId] = useState<ToolId | ''>('');
   const [opts, setOpts] = useState<RegexOptions>(DEFAULT_REGEX_OPTIONS);
@@ -172,7 +181,14 @@ export function SearchPanel({
   useEffect(() => {
     if (external === null || external.nonce === externalNonceRef.current) return;
     externalNonceRef.current = external.nonce;
-    // 先选中文字、再开面板：把选中的文字直接带进查找框。
+    // 这一次该落进哪个框：Ctrl+H 明确要替换框、Ctrl+F 明确要查找框，
+    // 其余情况（正文里又选了一段）按用户最后点过的那个框。
+    const field =
+      external.kind === 'focusReplace'
+        ? 'replace'
+        : external.kind === 'focusFind'
+          ? 'find'
+          : activeFieldRef.current;
     // 空选区一个字都不动 —— 否则用户边输入边被覆盖，那是很难用的 bug。
     if (external.text) {
       const escaped = escapeForFind(external.text);
@@ -180,8 +196,13 @@ export function SearchPanel({
       if (escaped !== external.text) {
         setOpts((prev) => ({ ...prev, regex: true }));
       }
-      setFindText(escaped);
-      setAutoFind((n) => n + 1);
+      if (field === 'replace') {
+        // 替换框只接住文字，绝不替用户执行什么
+        setReplaceText(escaped);
+      } else {
+        setFindText(escaped);
+        setAutoFind((n) => n + 1);
+      }
     }
     switch (external.kind) {
       case 'next':
@@ -191,10 +212,17 @@ export function SearchPanel({
         step(-1);
         break;
       case 'focusFind':
+        activeFieldRef.current = 'find';
         findRef.current?.focus();
+        findRef.current?.select();
         break;
       case 'focusReplace':
+        activeFieldRef.current = 'replace';
         replaceRef.current?.focus();
+        replaceRef.current?.select();
+        break;
+      case 'fill':
+        // 文字已经按 field 接住了，这里没有别的动作
         break;
     }
   }, [external, step]);
@@ -297,6 +325,10 @@ export function SearchPanel({
           value={findText}
           placeholder="支持 \c[GBK]、\c[天干]、\a、\d 等中文类目"
           onChange={(e) => setFindText(e.target.value)}
+          // 点过哪个框，正文里选中的文字就往哪个框里送
+          onFocus={() => {
+            activeFieldRef.current = 'find';
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -339,6 +371,9 @@ export function SearchPanel({
             toolId ? '已选择「使用工具」，替换内容由工具生成' : '可用 \\1 或 $1 引用捕获组'
           }
           onChange={(e) => setReplaceText(e.target.value)}
+          onFocus={() => {
+            activeFieldRef.current = 'replace';
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               e.preventDefault();

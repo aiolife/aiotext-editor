@@ -8,7 +8,14 @@
  * - 标签切换 / 重载 / 转换结果 → 整体或局部换 doc
  */
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { Compartment, EditorState, StateEffect, StateField, type Range } from '@codemirror/state';
+import {
+  Annotation,
+  Compartment,
+  EditorState,
+  StateEffect,
+  StateField,
+  type Range,
+} from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -75,8 +82,12 @@ interface EditorProps {
   tab: EditorTab;
   onContentChange: (id: string, content: string) => void;
   onCursorChange: (id: string, line: number, column: number) => void;
-  /** 选区变更（from/to 为文档偏移；相等表示无选区） */
-  onSelectionChange: (id: string, from: number, to: number) => void;
+  /**
+   * 选区变更（from/to 为文档偏移；相等表示无选区）。
+   * `external` 为 true 表示这一笔是外部请求跳过去的（查找下一个 / 跳差异），
+   * 不是用户自己框出来的。
+   */
+  onSelectionChange: (id: string, from: number, to: number, external?: boolean) => void;
   /** 待应用的外部替换（按 nonce 触发一次） */
   pendingEdit?: PendingEdit | null;
   /** 待应用的外部选区（按 nonce 触发一次） */
@@ -191,6 +202,15 @@ const readOnlyCompartment = new Compartment();
 function readOnlyExt(readOnly: boolean) {
   return readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
 }
+
+/**
+ * 标记「这一笔选区是外部请求跳过去的」。
+ *
+ * 查找 / 跳差异都会把光标挪到某处并选中一段（见 `pendingSelection`），
+ * 那不是用户用鼠标框出来的 —— 若不标明来源，查找面板会把「跳过去时自动选中
+ * 的词」当成用户新选的词回填进输入框，用户的替换词就凭空没了。
+ */
+const externalSelectionAnn = Annotation.define<boolean>();
 
 function lineNumberExt(show: boolean) {
   return show ? lineNumbers() : [];
@@ -475,7 +495,11 @@ export function Editor({
     const docLength = view.state.doc.length;
     const from = Math.max(0, Math.min(pendingSelection.from, docLength));
     const to = Math.max(from, Math.min(pendingSelection.to, docLength));
-    view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+    view.dispatch({
+      selection: { anchor: from, head: to },
+      scrollIntoView: true,
+      annotations: externalSelectionAnn.of(true),
+    });
     if (pendingSelection.focus !== false) {
       view.focus();
     }
@@ -540,7 +564,10 @@ export function Editor({
           }
           if (update.selectionSet || update.docChanged) {
             const sel = update.state.selection.main;
-            onSelectionChange(id, sel.from, sel.to);
+            const external = update.transactions.some(
+              (tr) => tr.annotation(externalSelectionAnn) === true,
+            );
+            onSelectionChange(id, sel.from, sel.to, external);
             // 列号按字符数计（东亚宽字符友好）
             const line = update.state.doc.lineAt(sel.head);
             const column = Array.from(line.text.slice(0, sel.head - line.from)).length + 1;

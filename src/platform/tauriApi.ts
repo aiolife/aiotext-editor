@@ -807,6 +807,47 @@ export async function compareTexts(
 }
 
 // ---------------------------------------------------------------------------
+// 标红专用的字符级差异（F-06 §6.2）
+// ---------------------------------------------------------------------------
+
+/**
+ * 差异段：最小编辑脚本里的一笔。
+ * 长度为 0 的一侧表示「那一侧没有对应的字」。
+ */
+export interface DiffSegment {
+  posA: number;
+  posB: number;
+  lenA: number;
+  lenB: number;
+  /** `delete` = A 多出这些字；`insert` = B 多出这些字 */
+  kind: 'delete' | 'insert';
+}
+
+export interface DiffResult {
+  segments: DiffSegment[];
+  truncated: boolean;
+  /** true = 文本过大，这一份是逐字口径退回的结果，不是最小编辑脚本 */
+  approximate: boolean;
+}
+
+/**
+ * 字符级差异（最小编辑脚本）—— **只给「标红」用**。
+ *
+ * 与 `compareTexts` 的区别：`compareTexts` 是 TextPro 逐字口径（失配后两侧各
+ * 进一步，之后会一路错位），适合 F5 一处一处往下校；这条求的是真正的编辑脚本，
+ * 两文只差一个字时就只给那一个字，后面恢复对齐的部分不标。
+ *
+ * 文本过大时后端会退回逐字口径，届时 `approximate` 为 true。
+ */
+export async function compareDiff(
+  a: string,
+  b: string,
+  opts: CompareOptions,
+): Promise<DiffResult> {
+  return invoke<DiffResult>('compare_diff', { a, b, opts });
+}
+
+// ---------------------------------------------------------------------------
 // F-07 文件合并
 // ---------------------------------------------------------------------------
 
