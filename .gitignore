@@ -17,3 +17,6 @@ src-tauri/gen/schemas/
 # IDE
 .idea/
 *.swp
+
+# TextPro 的参考素材（第三方资料，只作本地查阅，不入库）
+TextPro65/
