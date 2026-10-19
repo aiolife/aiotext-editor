@@ -36,16 +36,22 @@ const MAX_DP_CELLS: usize = 4_000_000;
 /// Myers 回溯要按 O(D²) 存每一步的 V，编辑距离超过这个数就认输换层
 const MAX_TRACE_D: usize = 4096;
 
+/// 那些「每步一条 V」的备份总共能用多少内存（避免超大文本一路吃到 GB 级）
+const MAX_TRACE_BYTES: usize = 512 * 1024 * 1024;
+
 // ---------------------------------------------------------------------------
 // 数据结构
 // ---------------------------------------------------------------------------
 
 /// 参与比较的字符：等同键 + 原文偏移 + 长度（UTF-16 码元）
+///
+/// 刻意用窄类型：50 MB 的文本约 1200 万个 Item，每个省 8 字节就是近百 MB。
+/// 偏移用 u32 够装下 42 亿个码元（远超任何实际文档）；长度只有 1 或 2 两种。
 #[derive(Clone, Copy)]
 struct Item {
     key: CanonKey,
-    pos: usize,
-    len: usize,
+    pos: u32,
+    len: u8,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,14 +98,23 @@ fn items_of(text: &str, opts: &CompareOptions, tables: &VariantTables) -> Vec<It
     CanonStream::new(text, opts, tables)
         .map(|c| Item {
             key: c.key,
-            pos: c.pos,
-            len: c.ch.len_utf16(),
+            pos: c.pos.min(u32::MAX as usize) as u32,
+            len: c.ch.len_utf16() as u8,
         })
         .collect()
 }
 
 /// 求两份文本的差异。`blocks` 为空即两文一致（在给定选项下）。
 pub fn diff(a: &str, b: &str, opts: &CompareOptions, tables: &VariantTables) -> DiffResult {
+    // 两串逐字相同：任何忽略项 / 异体字规则下都一致，不必构造那两份 Item 了
+    // （大文本时这一短路省下的是几百 MB 的分配）
+    if a == b {
+        return DiffResult {
+            blocks: Vec::new(),
+            truncated: false,
+            degraded: false,
+        };
+    }
     let items_a = items_of(a, opts, tables);
     let items_b = items_of(b, opts, tables);
     let a_len = compare::utf16_len(a);
@@ -252,7 +267,7 @@ fn lcs_dp_ops(a: &[Item], b: &[Item]) -> Option<Vec<Op>> {
 // 第 3 层：按行对齐（Myers），失配的行块内部再递归
 // ---------------------------------------------------------------------------
 
-/// 一_nodes 兰 newline 的 Canonical key 不会被异体字表改写
+/// 换行的 CanonKey 不会被异体字表改写（异体字表里没有换行这个成员）
 fn is_newline(key: CanonKey) -> bool {
     key.kind == 0 && key.value == '\n' as u32
 }
@@ -355,6 +370,12 @@ fn myers_ops<T: PartialEq>(a: &[T], b: &[T], max_d: usize) -> Option<Vec<Op>> {
     let mut trace: Vec<Vec<isize>> = Vec::new();
     let mut arrived = false;
 
+    // 每一步都备份一条 V，所以 trace 的内存是「步数 × V 的长度」。步数由编辑距离
+    // 决定，事先不知道 —— 给一个总预算兜住：万一遇到「两边都长、还差得多」的输入，
+    // 宁可认输交给下一层，也不能一路吃到 GB 级。
+    let per_step = 8 * (2 * (n + m) + 1).max(1);
+    let max_d = max_d.min((MAX_TRACE_BYTES / per_step).max(8));
+
     for d in 0..=(n + m) {
         if d > max_d {
             return None;
@@ -396,17 +417,19 @@ fn myers_ops<T: PartialEq>(a: &[T], b: &[T], max_d: usize) -> Option<Vec<Op>> {
 fn backtrack_ops(trace: &[Vec<isize>], n: usize, m: usize, offset: isize) -> Vec<Op> {
     let mut ops = Vec::new();
     let (mut x, mut y) = (n as isize, m as isize);
-    for (d, snapshot) in trace.iter().enumerate().rev() {
-        let d = d as isize;
+    for (step, snapshot) in trace.iter().enumerate().rev() {
+        let d = step as isize;
         let k = x - y;
-        let k_prev = if k == -d
-            || (k != d && snapshot[(k - 1 + offset) as usize] < snapshot[(k + 1 + offset) as usize])
-        {
-            k + 1
+        let get = |kk: isize| snapshot[(kk + offset) as usize];
+        let step_right = if k == -d {
+            true
+        } else if k == d {
+            false
         } else {
-            k - 1
+            get(k - 1) < get(k + 1)
         };
-        let prev_x = snapshot[(k_prev + offset) as usize];
+        let k_prev = if step_right { k + 1 } else { k - 1 };
+        let prev_x = get(k_prev);
         let prev_y = prev_x - k_prev;
         while x > prev_x && y > prev_y {
             ops.push(Op::Equal);
@@ -476,17 +499,25 @@ fn blocks_from_ops(
                 // 编辑脚本里两者的先后不一定 —— 回溯时先撞见哪个就先记哪个 ——
                 // 所以先看眼前这一串是什么，再配它的另一半。
                 // 一次只配一对：否则一大片没有相同字符的区域会被整个吞成一块。
-                let pos_a = if i < a.len() { a[i].pos } else { a_len };
-                let pos_b = if j < b.len() { b[j].pos } else { b_len };
+                let pos_a = if i < a.len() {
+                    a[i].pos as usize
+                } else {
+                    a_len
+                };
+                let pos_b = if j < b.len() {
+                    b[j].pos as usize
+                } else {
+                    b_len
+                };
                 let (mut end_a, mut end_b) = (pos_a, pos_b);
                 macro_rules! eat_run {
                     ($op:expr) => {
                         while k < ops.len() && ops[k] == $op {
                             if $op == Op::Delete {
-                                end_a = a[i].pos + a[i].len;
+                                end_a = a[i].pos as usize + a[i].len as usize;
                                 i += 1;
                             } else {
-                                end_b = b[j].pos + b[j].len;
+                                end_b = b[j].pos as usize + b[j].len as usize;
                                 j += 1;
                             }
                             k += 1;
@@ -860,5 +891,76 @@ mod tests {
         assert_eq!(backward.blocks.len(), 1);
         assert_eq!(forward.blocks[0].pos_a, backward.blocks[0].pos_a);
         assert_eq!(forward.blocks[0].len_b, backward.blocks[0].len_a);
+    }
+
+    #[test]
+    fn identical_strings_short_circuit() {
+        // 两串逐字相同：不必真的去算，且无论选项怎么设都一致
+        let mut lenient = strict();
+        lenient.ignore_newlines = true;
+        lenient.ignore_half_space = true;
+        let text = "汉字\n软件 甲乙丙\n".repeat(500);
+        let r = diff(&text, &text, &lenient, &tables());
+        assert!(r.blocks.is_empty());
+        assert!(!r.degraded);
+        assert!(!r.truncated);
+    }
+
+    #[test]
+    fn surrogate_pairs_are_measured_in_utf16_units() {
+        // 😀 在 UTF-16 里占两个码元：一处差异的长度得报 2，而不是一个字
+        let r = d("你好😀世界", "你好世界");
+        assert_eq!(r.blocks.len(), 1);
+        assert_eq!(r.blocks[0].pos_a, 2);
+        assert_eq!(r.blocks[0].len_a, 2, "代理对要按两个 UTF-16 码元算");
+        assert_eq!(r.blocks[0].len_b, 0);
+    }
+
+    #[test]
+    fn newline_style_counts_as_a_difference_unless_ignored() {
+        let r = d("甲乙\n丙丁", "甲乙\r\n丙丁");
+        assert_eq!(r.blocks.len(), 1, "换行风格不同应当算一处");
+        // 差异是 B 侧多出来的那一个 CR（LF 两边都对上了）
+        assert_eq!(r.blocks[0].len_a, 0);
+        assert_eq!(r.blocks[0].len_b, 1);
+
+        let mut ignores_newlines = strict();
+        ignores_newlines.ignore_newlines = true;
+        let r = diff("甲乙\n丙丁", "甲乙\r\n丙丁", &ignores_newlines, &tables());
+        assert!(r.blocks.is_empty(), "勾了「忽略换行」就该一致");
+    }
+
+    #[test]
+    fn line_anchors_survive_many_consecutive_steps() {
+        // 一连删掉 30 行：Myers 要走几十步，回溯必须一步不错 ——
+        // trace 改成只存 [−d..d] 那一段之后，这里最容易露出马脚。
+        let line = |k: usize| format!("第 {} 行，两边原本一样。\n", k);
+        let a: String = (0..200).map(line).collect();
+        let b: String = (0..200)
+            .filter(|k| !(40..70).contains(k))
+            .map(line)
+            .collect();
+        let r = diff(&a, &b, &strict(), &tables());
+        assert!(!r.degraded);
+        assert_eq!(r.blocks.len(), 1, "连续删掉的这 30 行是一处");
+        assert_eq!(r.blocks[0].len_b, 0);
+        // pos / len 是 **UTF-16 码元**坐标（前端 CodeMirror 的口径），
+        // 不能直接拿来给 &str 做字节切片 —— 一个汉字在这里是 1 个码元却是 3 个字节。
+        // 起点应当落在第 40 行上。前后缀裁的是**行内**的公共部分（两边的「第 」
+        // 也一样，后面的行尾也有一段相同），所以差几个字符是正常的。
+        let blk = r.blocks[0];
+        let row_40 = 590usize; // 前 40 行的 UTF-16 码元数
+        assert!(
+            (row_40 - 8..=row_40 + 8).contains(&blk.pos_a),
+            "起点应在第 40 行附近，实际 {}",
+            blk.pos_a
+        );
+        let row_len = 15usize; // 两位行号那一行是 15 个码元
+        let expect = 30 * row_len; // 删掉的正好是 30 行
+        assert!(
+            (expect - 2 * row_len..=expect).contains(&blk.len_a),
+            "长度应接近 30 行（{expect} 码元），实际 {}",
+            blk.len_a
+        );
     }
 }
