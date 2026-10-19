@@ -95,7 +95,8 @@ aiotext-editor/
 │     │   ├─ opencc.rs           # OpenCC 安全封装（简繁引擎）
 │     │   ├─ replace.rs          # 自定义表加载 + 应用（独立 / OpenCC 内联）
 │     │   ├─ regex.rs            # 中文正则扩展
-│     │   ├─ compare.rs          # Myers diff + 异体字
+│     │   ├─ compare.rs          # 规范化口径（忽略项 / 异体字组键）
+│     │   ├─ text_diff.rs        # 差异求解：最小编辑脚本 + 三级漏斗
 │     │   ├─ merge.rs            # 文件合并
 │     │   ├─ pipelines/          # 所有 step 实现
 │     │   ├─ data_tables.rs      # 开放文本词表加载器（fc1/fc2 异体字组表）
@@ -182,13 +183,14 @@ aiotext-editor/
 ```
 用户打开两个标签，平铺窗口
 用户各自点击设起始位
-  → invoke('compare_texts', { a, b, opts })
-  → core::compare::myers(a, b, opts)
-        → ignore_newlines / ignore_punct 预处理
-        → 异体字策略应用
-        → Myers diff
-  → 返回 differences[]
-  → 前端按序在状态栏提示，光标跳到对应位置（CodeMirror view.dispatch）
+  → invoke('compare_diff', { a, b, opts })
+  → core::text_diff::diff(a, b, opts)
+        → 忽略项预处理（换行 / 空格 / 全半角标点）
+        → 异体字策略应用（fc1 完全等同 / fc2 部分等同折成组键）
+        → 三级漏斗：裁公共前后缀 → 够小则 DP / 有换行则按行 Myers /
+          无换行而两侧等长则逐位扫；兜不住就 degraded
+  → 返回 blocks[]（一处 = 相邻的一「缺」一「多」，已并成一块）
+  → 前端三处同用这一份结果：差异计数、F5 跳差异（两侧光标）、标红
 ```
 
 ---
@@ -360,20 +362,25 @@ npm run tauri:build     # 出包
 | 模块 | 职责 |
 |------|------|
 | `core/data_tables.rs` | TextPro 异体字组表（`fc1.txt` 完全等同 + `fc2.txt` 部分等同）加载器；UTF-8 with BOM 行解析、每行一组、首次出现的组生效；`OnceLock` 进程内缓存，资源目录探测走 `resource_dir → CARGO_MANIFEST_DIR → exe_dir` 候选链 |
-| `core/compare.rs` | **同步逐字比较**（TextPro 口径，非 Myers diff）；`CompareOptions`（4 个忽略项 + 异体字策略 `VariantStrictness`）；流式 `CanonStream` 跳过忽略字符 + 折叠异体字组为「组键」；`compare()` 持双指针逐一比对，**失配处两侧各进一步**（与 Myers 的「最小编辑脚本」语义不同）；偏移始终为原文 **UTF-16 码元**；差异上限 5000 + `truncated`；4 种 `CompareEnd`（`bothEnded` / `aEnded` / `bEnded` / `truncated`） |
+| `core/compare.rs` | **只留规范化口径**（早期那套逐字比较已删）；`CompareOptions`（4 个忽略项 + 异体字策略 `VariantStrictness`）；流式 `CanonStream` 跳过忽略字符 + 折叠异体字组为「组键」；偏移始终为原文 **UTF-16 码元** |
+| `core/text_diff.rs` | 差异的唯一口径，`DiffResult { blocks, truncated, degraded }`；一处差异 `DiffBlock { posA, posB, lenA, lenB }`，长度为 0 的一侧表示「那一侧没有对应的字」。**三级漏斗**：① 裁公共前后缀 ② 剩得少 → DP（`MAX_DP_CELLS`，精确最优）③ 有换行 → 行内容压成 u64 做 Myers `O(N·D)`，失配的行块内部递归回 ① ④ 没有换行但两侧等长 → 逐位比较，一趟线性 ⑤ 都兜不住 → `degraded`，如实说明而不是退回另一套算法；差异上限 5000 + `truncated` |
 | `core/merge.rs` | 文件合并规划器（纯函数，吃 `MergeItem` 内存数据）：`Simple`（行尾追加空行）/ `SameName`（按源正则第 1 捕获组分文件，组内自然排序）；排序为**自然排序**（数字段按数值，段后字符仍参与比较），键相同时按文件名次排、没给关键字时保持输入顺序；模板 `\1.txt` 渲染；`plan_merge` 可万级直测 |
-| `commands/compare.rs` | `compare_texts(a, b, opts)`，资源目录解析异体字组表；`spawn_blocking` |
+| `commands/compare.rs` | `compare_diff(a, b, opts)`，资源目录解析异体字组表；`spawn_blocking` |
 | `commands/merge.rs` | `merge_files(req)`：判别联合（`Manual` 多文件清单 + 输出文件 / `Auto` 目录 + 正则三件套）；`MergeRequest` 用 `tag + flatten` 拼出平铺 JSON；读源失败**跳过并在报告里说明**；输出已存在时**默认跳过**，可勾覆盖 |
 | 前端 | `CompareDialog`（对照标签 / 4 忽略项 / 异体字策略 / 平铺方向）；`CompareBar`（差异计数 + 4 个动作）；`MergeDialog`（两页签 + 覆盖开关）；`Editor` 增 `readOnly` + `SelectionRequest.focus`（比较双窗联动时让 B 只读窗不抢焦点）；双栏平铺（垂直 / 水平） |
-| 契约 | `tests/stage6_contract.rs`：5 项交叉验证 `CompareOptions` / `CompareReport` / `CompareEnd` / `Difference` / `MergeRequest` / `MergeReport` / `MergedOutput` 的 serde 形状与前端 TS 接口一致；`MergeRequest` tag+flatten 平铺 JSON 钉死 |
+| 契约 | `tests/stage6_contract.rs`：5 项交叉验证 `CompareOptions` / `DiffResult` / `DiffBlock` / `MergeRequest` / `MergeReport` / `MergedOutput` 的 serde 形状与前端 TS 接口一致；`MergeRequest` tag+flatten 平铺 JSON 钉死 |
 
-**比较采用 TextPro「逐字同步」而非 Myers diff**（与规格 §6.5 的实现提示有偏差，已在 F-06 实现注记里说明）：F-06 的用户故事是「F5 同步、逐字校对、一方到达尾部即结束」，而 Myers 求的是最小编辑脚本——失配处两侧各退一步会与 TextPro 的「两侧各进一步」不符。流式 O(n) 实现百 MB 文本单核 ~秒级就能跑完，无需为百 MB 用例引入 `similar` 依赖；**复杂度 O(n + m)，内存 O(1)**。
+**比较求的是最小编辑脚本，不是 TextPro 的逐字同步**（这是对早期决策的反转，理由见 F-06 §6.8）。逐字口径在失配处两侧各进一步，之后一路错位 —— 两文明明只差一个字，后半篇却全被算进差异。
+
+代价是 LCS 的 `O(n·m)` 撑不住 50 MB，于是用**三级漏斗**把规模降下来：真实文本的差异往往稀疏，先裁公共前后缀，多数情形一步就够；剩得多就看有没有换行 —— 有换行就按行做 Myers（`O(N·D)`，D 是行差数，通常个位数），只对失配的行块做字符级 DP；既没换行又两侧等长时，退成一趟线性扫描。
+
+**兜不住就如实说**：`degraded = true` 会让工具条写明「文本过大，未完整比较」，而不是悄悄换一套算法继续给出看着正常的数字。整条链路不依赖第三方 diff 库。
 
 **比较偏移是 UTF-16 码元**（与 CodeMirror / regex 一致），指向**原文坐标**而非规范化后的坐标；这是单测 `positions_are_original_offsets_despite_ignored_chars` 锁定的关键不变量。
 
 **异体字策略是「叠加」关系**：`FullEq` 只用 fc1（伪＝偽）；`PartialEq` 优先 fc1 再叠加 fc2（达＝達），即「部分等同」是「完全等同」的超集。`VariantStrictness` 的枚举写法刻意让 `#[default]` 落到 `Strict`，避免「打开比较就忽略异体字」这类隐式行为。
 
-**比较的「完成」语义**：单端先到尾部时仍记一处「尾部多出」差异（`charA` / `charB` 为 `None`，pos 为已到尾部一方的全文长度）以触发 UI 提示「B 窗先到尾部，A 窗还剩 N 字」；`bothEnded` 才是真完成（无尾部差异）。
+**「一致」的判断只有一个**：`blocks` 为空即两文在给定选项下一致。旧口径里那套「谁先到尾部、还剩几字」的 `CompareEnd` 已随逐字比较一起删除 —— 它表达的是同一件事（谁长谁短），而现在工具条直接给出**新增 X 字 / 缺失 Y 字**，与标红的方向也一致；`degraded` 为真时，即便 `blocks` 为空也只代表「看过的这部分没差异」，不敢说全篇一致。
 
 **合并的排序与平局**：`natural_cmp` 数字段按数值比较，段后字符继续参与比较（不能用 `from_fn` + `filter` 取数字段——那会把分隔符当非数字字符被 filter 吞掉，需用 `Peekable` 的 `take_digits` 助手）；`sort_by_key` 在**给了排序关键字**时按「键名 → 文件名」自然序两轮比较，**没给排序关键字**时保持输入顺序。
 

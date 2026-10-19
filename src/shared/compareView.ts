@@ -1,11 +1,11 @@
 /**
- * 比较视图的两块纯计算（F-06 §6.2）。
+ * 比较视图的纯计算（F-06 §6.2）。
  *
- * 抽到 shared 而不是留在组件里：这两处**最容易搞反方向** ——
- * 标红标在哪一格、角色名跟着目标窗易位。搞反了界面看着也「能转」，
- * 只有单测能把它钉住。
+ * 抽到 shared 而不是留在组件里：这几处**最容易搞反方向** ——
+ * 标红该标在哪一格、角色名跟着目标窗易位、新增与缺失谁算谁。
+ * 搞反了界面看着也「能转」，只有单测能把它钉住。
  */
-import type { DiffSegment } from '../platform/tauriApi';
+import type { DiffBlock } from '../platform/tauriApi';
 
 /** 差异数据里 A / B 两侧的记号 */
 export type ComparePane = 'a' | 'b';
@@ -40,35 +40,69 @@ export interface PaneMarks {
 /**
  * 两窗各自的差异标红。
  *
- * 目标窗（可编辑的那一格）是「要改的文件」，所以看每一段差异的**归属**：
+ * 目标窗（可编辑的那一格）是「要改的文件」，所以看每一处差异归谁：
  *
- * - `delete` 段（**A 多出**这些字）—— 标在 **A 窗**：
- *   目标窗在 A 时是「多出，该删」；目标窗在 B 时是多出了对方没有的字，
- *   标在 A 正好提示「这里有字要补进目标窗」。
- * - `insert` 段（**B 多出**这些字）—— 标在 **B 窗**，同一个道理镜像过来。
+ * - A 多出的那些字（`lenA`）—— 标在 **A 窗**：目标窗在 A 时是「多出，该删」；
+ *   目标窗在 B 时，那里是照着补进目标窗的字。
+ * - B 多出的那些字（`lenB`）—— 标在 **B 窗**，同一个道理镜像过来。
  *
  * 所以**落在哪一格是固定的**（看谁多出了字），变的只是语义称谓；
- * 也就意味着切目标窗时，同一段红的 kind 会翻面。
+ * 也就意味着切目标窗时，同一处红的 kind 会翻面。
  */
-export function buildDiffMarks(segments: DiffSegment[], target: ComparePane): PaneMarks {
+export function buildDiffMarks(blocks: DiffBlock[], target: ComparePane): PaneMarks {
   const a: DiffMarkRange[] = [];
   const b: DiffMarkRange[] = [];
-  for (const s of segments) {
-    if (s.kind === 'delete') {
-      if (s.lenA > 0) {
-        a.push({
-          start: s.posA,
-          end: s.posA + s.lenA,
-          kind: target === 'a' ? 'extra' : 'missing',
-        });
-      }
-    } else if (s.lenB > 0) {
+  for (const blk of blocks) {
+    if (blk.lenA > 0) {
+      a.push({
+        start: blk.posA,
+        end: blk.posA + blk.lenA,
+        kind: target === 'a' ? 'extra' : 'missing',
+      });
+    }
+    if (blk.lenB > 0) {
       b.push({
-        start: s.posB,
-        end: s.posB + s.lenB,
+        start: blk.posB,
+        end: blk.posB + blk.lenB,
         kind: target === 'b' ? 'extra' : 'missing',
       });
     }
   }
   return { a, b };
+}
+
+/** 目标窗的增漏字数（工具条那句「新增 N 字 / 缺失 N 字」） */
+export interface DiffStats {
+  added: number;
+  missing: number;
+}
+
+/**
+ * 站在目标窗的立场统计。
+ *
+ * 目标窗是 A 时：A 多出的 `lenA` 算「新增」（要删掉才对齐），
+ * A 缺的 `lenB` 算「缺失」（要补进来）；目标窗切到 B 正好反过来。
+ */
+export function diffStats(blocks: DiffBlock[], target: ComparePane): DiffStats {
+  let added = 0;
+  let missing = 0;
+  for (const blk of blocks) {
+    if (target === 'a') {
+      added += blk.lenA;
+      missing += blk.lenB;
+    } else {
+      added += blk.lenB;
+      missing += blk.lenA;
+    }
+  }
+  return { added, missing };
+}
+
+/** 工具条要显示原文片段；太长就掐断加省略号 */
+export function previewText(text: string, start: number, end: number, max = 12): string {
+  const chars = Array.from(text.slice(start, end));
+  if (chars.length <= max) {
+    return chars.join('');
+  }
+  return `${chars.slice(0, max).join('')}…`;
 }

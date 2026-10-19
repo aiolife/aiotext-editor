@@ -47,16 +47,14 @@ import {
   ENCODING_OPTIONS,
   applyPipelineStep,
   pipelinesCatalog,
-  compareTexts,
   compareDiff,
   fsRead,
   sessionLoad,
   sessionSave,
   startupMetrics,
   type AmbiguitySpan,
-  type CompareDifference,
   type CompareOptions,
-  type CompareReport,
+  type DiffBlock,
   type DiffResult,
   type OpenccDirectionMeta,
   type SessionState,
@@ -84,7 +82,7 @@ import type { ConvertTarget } from './components/ConvertDialog';
 import { SearchPanel } from './components/SearchPanel';
 import { ToolOptionsDialog } from './components/ToolOptionsDialog';
 import { CompareBar } from './components/CompareBar';
-import { paneRole, buildDiffMarks, type PaneMarks } from './shared/compareView';
+import { paneRole, buildDiffMarks, diffStats, type PaneMarks } from './shared/compareView';
 import { SELECTION_FILL_LIMIT } from './shared/findText';
 
 /**
@@ -327,10 +325,9 @@ export default function App() {
     orientation: 'vertical' | 'horizontal';
     target: 'a' | 'b';
   } | null>(null);
-  const [compareReport, setCompareReport] = useState<CompareReport | null>(null);
   /**
-   * 标红用的字符级差异（最小编辑脚本）。
-   * 与上面的逐字报告**并存**：F5 跳差异用逐字那份，标红用这一份 —— 各管一头。
+   * 比较结果 —— **只有这一个口径**：差异计数、F5 跳差异、标红全用它，
+   * 所以工具条上的「N 处」跟屏幕上标红的处数必然一样多。
    */
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
   const [diffIndex, setDiffIndex] = useState(-1);
@@ -1050,23 +1047,23 @@ export default function App() {
   const diffMarks = useMemo<PaneMarks>(
     () =>
       compare && diffResult
-        ? buildDiffMarks(diffResult.segments, compare.target)
+        ? buildDiffMarks(diffResult.blocks, compare.target)
         : { a: [], b: [] },
     [compare, diffResult],
   );
 
   /** 跳到某处差异：A、B 两个窗格同时定位（不抢焦点，由状态栏提示） */
-  const jumpToDiff = useCallback((diff: CompareDifference) => {
+  const jumpToDiff = useCallback((blk: DiffBlock) => {
     const nonce = Date.now();
     setCompareSelectionA({
-      from: diff.posA,
-      to: diff.posA + (diff.charA?.length ?? 0),
+      from: blk.posA,
+      to: blk.posA + blk.lenA,
       nonce,
       focus: false,
     });
     setCompareSelection({
-      from: diff.posB,
-      to: diff.posB + (diff.charB?.length ?? 0),
+      from: blk.posB,
+      to: blk.posB + blk.lenB,
       nonce,
       focus: false,
     });
@@ -1090,45 +1087,27 @@ export default function App() {
       try {
         const a = from ? aTab.content.slice(from.a) : aTab.content;
         const b = from ? bTab.content.slice(from.b) : bTab.content;
-        // F5 跳差异用逐字口径；标红另取一份最小编辑脚本（理由见 core::text_diff
-        // 的模块注释：逐字口径会把差异后面的字全染红）
-        const [report, diff] = await Promise.all([
-          compareTexts(a, b, opts),
-          // 标红失败不该拖垮整个比较：拿不到就不标，F5 照常能用
-          compareDiff(a, b, opts).catch(() => null),
-        ]);
+        const result = await compareDiff(a, b, opts);
         if (from) {
-          for (const d of report.differences) {
-            d.posA += from.a;
-            d.posB += from.b;
-          }
-          if (diff) {
-            for (const s of diff.segments) {
-              s.posA += from.a;
-              s.posB += from.b;
-            }
+          for (const blk of result.blocks) {
+            blk.posA += from.a;
+            blk.posB += from.b;
           }
         }
-        setCompareReport(report);
-        setDiffResult(diff);
-        if (report.differences.length > 0) {
+        setDiffResult(result);
+        if (result.blocks.length > 0) {
           setDiffIndex(0);
-          jumpToDiff(report.differences[0]);
-          const first = report.differences[0];
+          jumpToDiff(result.blocks[0]);
+          const { added, missing } = diffStats(result.blocks, ctx.target);
+          const warn = result.degraded ? '（文本过大，未完整比较）' : '';
           setNotice(
-            `发现 ${report.differences.length} 处不一致：第 1 处 ${paneRole('a', ctx.target)}『${first.charA ?? '（尾部）'}』↔ ${paneRole('b', ctx.target)}『${first.charB ?? '（尾部）'}』（F5 下一处，Shift+F5 从光标重比）`,
+            `发现 ${result.blocks.length} 处不一致：新增 ${added} 字、缺失 ${missing} 字${warn}（F5 下一处，Shift+F5 从光标重比）`,
           );
         } else {
           setDiffIndex(-1);
-          const endHint =
-            report.end === 'bothEnded'
-              ? '两文一致'
-              : report.end === 'aEnded'
-                ? `${paneRole('a', ctx.target)}先到尾部，${paneRole('b', ctx.target)}还剩 ${report.remainingB} 字`
-                : report.end === 'truncated'
-                  ? '差异过多，报告已截断'
-                  : `${paneRole('b', ctx.target)}先到尾部，${paneRole('a', ctx.target)}还剩 ${report.remainingA} 字`;
-          setNotice(`比较完成：${endHint}`);
+          setNotice(
+            result.degraded ? '比较完成：文本过大，未能完整比较' : '比较完成：两文一致',
+          );
         }
       } catch (e) {
         setError(`比较失败：${String(e)}`);
@@ -1152,22 +1131,22 @@ export default function App() {
   );
 
   const goNextDiff = useCallback(() => {
-    if (!compareReport) return;
-    if (diffIndex >= compareReport.differences.length - 1) {
+    if (!diffResult) return;
+    if (diffIndex >= diffResult.blocks.length - 1) {
       setNotice('已到最后一处不一致；改动后可按 Shift+F5 从两个光标处重新比较');
       return;
     }
     const next = diffIndex + 1;
     setDiffIndex(next);
-    jumpToDiff(compareReport.differences[next]);
-  }, [compareReport, diffIndex, jumpToDiff]);
+    jumpToDiff(diffResult.blocks[next]);
+  }, [diffResult, diffIndex, jumpToDiff]);
 
   const goPrevDiff = useCallback(() => {
-    if (!compareReport || diffIndex <= 0) return;
+    if (!diffResult || diffIndex <= 0) return;
     const prev = diffIndex - 1;
     setDiffIndex(prev);
-    jumpToDiff(compareReport.differences[prev]);
-  }, [compareReport, diffIndex, jumpToDiff]);
+    jumpToDiff(diffResult.blocks[prev]);
+  }, [diffResult, diffIndex, jumpToDiff]);
 
   /** 重选同步起点：以两个窗格的当前光标为起点重新比较 */
   const restartCompare = useCallback(() => {
@@ -1178,7 +1157,6 @@ export default function App() {
 
   const exitCompare = useCallback(() => {
     setCompare(null);
-    setCompareReport(null);
     setDiffResult(null);
     setDiffIndex(-1);
     setCompareSelectionA(null);
@@ -1338,10 +1316,10 @@ export default function App() {
       'edit.redo': { run: () => sendEditorCommand('redo'), enabled: () => activeTab !== null },
       'edit.goto': { run: () => setGotoOpen(true), enabled: () => activeTab !== null },
       // 比较
-      'compare.next': { run: goNextDiff, enabled: () => compareReport !== null },
+      'compare.next': { run: goNextDiff, enabled: () => diffResult !== null },
       'compare.previous': {
         run: goPrevDiff,
-        enabled: () => compareReport !== null && diffIndex > 0,
+        enabled: () => diffResult !== null && diffIndex > 0,
       },
       'compare.restart': { run: restartCompare, enabled: () => compare !== null },
       // 视图
@@ -1409,7 +1387,7 @@ export default function App() {
       handleRunTool,
       directions.length,
       tools.length,
-      compareReport,
+      diffResult,
       diffIndex,
       goNextDiff,
       goPrevDiff,
@@ -1623,11 +1601,13 @@ export default function App() {
         )}
         {compare && (
           <CompareBar
-            report={compareReport}
+            result={diffResult}
             index={diffIndex}
             target={compare.target}
             aName={compareTabA?.fileName || '未命名'}
             bName={compareTabB?.fileName || '未命名'}
+            contentA={compareTabA?.content ?? ''}
+            contentB={compareTabB?.content ?? ''}
             onPrev={goPrevDiff}
             onNext={goNextDiff}
             onRestart={restartCompare}

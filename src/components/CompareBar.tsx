@@ -2,16 +2,25 @@
  * 比较模式工具条（F-06 §6.2）：差异计数 + 上一处 / 下一处 / 从光标重比 / 退出。
  * 状态栏位于其下方，两者共同承担「状态栏提示」职责。
  */
-import type { CompareDifference, CompareReport } from '../platform/tauriApi';
+import type { DiffBlock, DiffResult } from '../platform/tauriApi';
+import {
+  diffStats,
+  paneRole,
+  previewText,
+  type ComparePane,
+} from '../shared/compareView';
 
 interface CompareBarProps {
-  report: CompareReport | null;
+  result: DiffResult | null;
   /** 当前定位的差异下标（无则 -1） */
   index: number;
   /** 哪一格是当前目标窗（可编辑的那一侧） */
-  target: 'a' | 'b';
+  target: ComparePane;
   aName: string;
   bName: string;
+  /** 两侧正文，用来抄出当前那一处的原文片段 */
+  contentA: string;
+  contentB: string;
   onPrev: () => void;
   onNext: () => void;
   /** 从两个窗格当前光标处重新比较（重选同步起点） */
@@ -19,76 +28,83 @@ interface CompareBarProps {
   onExit: () => void;
 }
 
-function charLabel(value: string | null): string {
-  if (value === null) {
-    return '（已到尾部）';
+/** 片段里的换行画成符号，免得把工具条撑高 */
+function inline(value: string): string {
+  return value.replace(/\n/g, '␊');
+}
+
+function quote(value: string): string {
+  return value === '' ? '（无）' : `『${inline(value)}』`;
+}
+
+/** 当前那一处两侧的原文（缺/多的一侧就是「（无）」） */
+function currentLabel(
+  current: DiffBlock | null,
+  target: ComparePane,
+  contentA: string,
+  contentB: string,
+): string {
+  if (!current) {
+    return '';
   }
-  return value === '\n' ? '␊' : value;
+  const a = previewText(contentA, current.posA, current.posA + current.lenA);
+  const b = previewText(contentB, current.posB, current.posB + current.lenB);
+  return `${paneRole('a', target)}${quote(a)} ↔ ${paneRole('b', target)}${quote(b)}`;
 }
 
 /**
- * 差异数据里的 A / B 是两侧的固定记号（不随目标窗切换而变），
- * 显示时才翻译成用户看到的角色名。
+ * 站在目标窗立场的统计（借鉴 DiffChecker 那条「新增 / 删除 / 修改」的统计栏）。
+ * 降级与截断不许藏着 —— 算不准就说算不准。
  */
-function roleOf(pane: 'a' | 'b', target: 'a' | 'b'): string {
-  return pane === target ? '目标' : '对照';
-}
-
-function endHint(report: CompareReport | null, target: 'a' | 'b'): string {
-  if (!report) {
-    return '';
+function summary(result: DiffResult, target: ComparePane): string {
+  if (result.blocks.length === 0) {
+    return result.degraded ? '文本过大，未能完整比较' : '两文一致';
   }
-  if (report.end === 'aEnded') {
-    return `${roleOf('a', target)}窗先到尾部，${roleOf('b', target)}窗还剩 ${report.remainingB} 字`;
+  const { added, missing } = diffStats(result.blocks, target);
+  const parts = [`共 ${result.blocks.length} 处`, `新增 ${added} 字`, `缺失 ${missing} 字`];
+  if (result.truncated) {
+    parts.push('差异过多已截断');
   }
-  if (report.end === 'bEnded') {
-    return `${roleOf('b', target)}窗先到尾部，${roleOf('a', target)}窗还剩 ${report.remainingA} 字`;
+  if (result.degraded) {
+    parts.push('文本过大，未完整比较');
   }
-  if (report.end === 'truncated') {
-    return `差异过多，仅显示前 ${report.differences.length} 处`;
-  }
-  return '双方同时到尾部，比较完成';
+  return parts.join(' · ');
 }
 
 export function CompareBar({
-  report,
+  result,
   index,
   target,
   aName,
   bName,
+  contentA,
+  contentB,
   onPrev,
   onNext,
   onRestart,
   onExit,
 }: CompareBarProps) {
-  const total = report?.differences.length ?? 0;
-  const current: CompareDifference | null = report?.differences[index] ?? null;
+  const total = result?.blocks.length ?? 0;
+  const current: DiffBlock | null = result?.blocks[index] ?? null;
   const hasPrev = index > 0;
-  const hasNext = report !== null && index < total - 1;
+  const hasNext = result !== null && index < total - 1;
 
   return (
     <div className="compare-bar">
       <div className="compare-bar-head">
         <strong>比较中</strong>
         <span>
-          {roleOf('a', target)}「{aName}」 ↔ {roleOf('b', target)}「{bName}」
+          {paneRole('a', target)}「{aName}」 ↔ {paneRole('b', target)}「{bName}」
         </span>
       </div>
       <div className="compare-bar-status">
-        {report === null ? (
+        {result === null ? (
           <span>正在比较…</span>
-        ) : total === 0 ? (
-          <span>未发现不一致（{endHint(report, target)}）</span>
         ) : (
           <span>
-            差异 {index + 1}/{total}
-            {current ? (
-              <>
-                ：{roleOf('a', target)}『{charLabel(current.charA)}』↔{' '}
-                {roleOf('b', target)}『{charLabel(current.charB)}』
-              </>
-            ) : null}
-            {report.truncated ? '（已截断）' : ''} · {endHint(report, target)}
+            {current ? `第 ${index + 1}/${total} 处：${currentLabel(current, target, contentA, contentB)}` : null}
+            {current ? ' · ' : null}
+            {summary(result, target)}
           </span>
         )}
       </div>

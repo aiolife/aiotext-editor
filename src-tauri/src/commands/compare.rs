@@ -1,39 +1,21 @@
 //! 文件比较命令（F-06 §6.4）
 //!
-//! `compare_texts` 的偏移口径为 **UTF-16 码元**，前端 CodeMirror 可直接
-//! 用于定位与跳转。异体字组表按进程缓存（`core::data_tables`）。
+//! 比较只有**一个口径**：`core::text_diff` 求的最小编辑脚本 —— 差异计数、F5
+//! 跳差异、标红，全都用这一份结果，屏幕上看到的数量与工具条上的数字必然一致。
+//! 偏移口径为 **UTF-16 码元**，前端 CodeMirror 可直接用于定位与跳转。
+//! 异体字组表按进程缓存（`core::data_tables`）。
 
 use tauri::Manager;
 
-use crate::core::compare::{self, CompareOptions, CompareReport};
+use crate::core::compare::CompareOptions;
 use crate::core::data_tables;
 use crate::core::text_diff::{self, DiffResult};
 use crate::error::{AppError, AppResult};
 
-/// 同步逐字比较两份文本（忽略项与异体字策略见 `CompareOptions`）
-#[tauri::command]
-pub async fn compare_texts(
-    app: tauri::AppHandle,
-    a: String,
-    b: String,
-    opts: CompareOptions,
-) -> Result<CompareReport, String> {
-    let run = move || -> AppResult<CompareReport> {
-        let resource_dir = app.path().resource_dir().ok();
-        let tables = data_tables::get_variant_tables(resource_dir.as_deref())?;
-        Ok(compare::compare(&a, &b, &opts, tables))
-    };
-    tauri::async_runtime::spawn_blocking(run)
-        .await
-        .map_err(|e| format!("比较任务异常：{e}"))?
-        .map_err(|e: AppError| e.to_string())
-}
-
-/// 字符级差异（最小编辑脚本）—— **只给「标红」用**
+/// 求两份文本的差异
 ///
-/// 与 `compare_texts` 的区别见 `core::text_diff` 的模块注释：这里求的是真正的
-/// 编辑脚本，多一个字就只标那一个字，后面恢复对齐的部分不标。
-/// F5 跳差异仍旧走 `compare_texts` 的逐字口径（那是 TextPro 的校对口子）。
+/// 相邻的「缺 + 多」已经并成一「处」，所以这里的块数就是界面上说的「N 处」。
+/// `degraded` 为真表示文本过大或差异过密，结果只是近似 —— UI 会照实说明。
 #[tauri::command]
 pub async fn compare_diff(
     app: tauri::AppHandle,

@@ -109,7 +109,6 @@ pub fn run() {
             commands::pipelines::pipelines_catalog,
             commands::pipelines::apply_pipeline_step,
             commands::pipelines::apply_pipeline_chain,
-            commands::compare::compare_texts,
             commands::compare::compare_diff,
             commands::merge::merge_files,
             commands::batch::batch_run,

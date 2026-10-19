@@ -775,69 +775,41 @@ export const VARIANT_STRICTNESS_OPTIONS: { value: VariantStrictness; label: stri
   { value: 'partialEq', label: '部分等同也视为相同（fc2：达＝達）' },
 ];
 
-/** 一处不一致；`charA`/`charB` 为 null 表示该方已到尾部（偏移为 UTF-16 码元） */
-export interface CompareDifference {
-  posA: number;
-  posB: number;
-  charA: string | null;
-  charB: string | null;
-}
-
-/** 结束原因（前端据此提示「已完成 / 一方先到尾部 / 差异过多截断」） */
-export type CompareEnd = 'bothEnded' | 'aEnded' | 'bEnded' | 'truncated';
-
-export interface CompareReport {
-  differences: CompareDifference[];
-  /** 差异超过上限（后端 5000）被截断 */
-  truncated: boolean;
-  end: CompareEnd;
-  /** 结束时 A 方剩余字符数 */
-  remainingA: number;
-  /** 结束时 B 方剩余字符数 */
-  remainingB: number;
-}
-
-/** 同步逐字比较两份文本（F-06 §6.4） */
-export async function compareTexts(
-  a: string,
-  b: string,
-  opts: CompareOptions,
-): Promise<CompareReport> {
-  return invoke<CompareReport>('compare_texts', { a, b, opts });
-}
-
 // ---------------------------------------------------------------------------
-// 标红专用的字符级差异（F-06 §6.2）
+// 文件比较（F-06 §6.2）—— 差异计数、F5 跳差异、标红，全都用这一份结果
 // ---------------------------------------------------------------------------
 
 /**
- * 差异段：最小编辑脚本里的一笔。
- * 长度为 0 的一侧表示「那一侧没有对应的字」。
+ * 一处差异：两侧的偏移与长度（偏移为 UTF-16 码元，与 CodeMirror 文档坐标一致）。
+ *
+ * 长度为 0 的一侧表示「那一侧没有对应的字」：
+ * - `lenB === 0` —— A 多出了 `lenA` 个字（删掉才对齐）；
+ * - `lenA === 0` —— B 多出了 `lenB` 个字（补上才对齐）；
+ * - 两边都大于 0 —— 某处的字被换掉了。
+ *
+ * 相邻的「缺 + 多」在后端已经并成一块，所以这里的条数就是界面上说的「N 处」。
  */
-export interface DiffSegment {
+export interface DiffBlock {
   posA: number;
   posB: number;
   lenA: number;
   lenB: number;
-  /** `delete` = A 多出这些字；`insert` = B 多出这些字 */
-  kind: 'delete' | 'insert';
 }
 
 export interface DiffResult {
-  segments: DiffSegment[];
+  /** 差异块，按文中出现的先后顺序排列 */
+  blocks: DiffBlock[];
+  /** 差异过多，已截断到后端上限 */
   truncated: boolean;
-  /** true = 文本过大，这一份是逐字口径退回的结果，不是最小编辑脚本 */
-  approximate: boolean;
+  /** 文本过大或差异过密，这份结果只是近似 —— UI 要照实说明 */
+  degraded: boolean;
 }
 
 /**
- * 字符级差异（最小编辑脚本）—— **只给「标红」用**。
+ * 求两份文本的差异（最小编辑脚本）。
  *
- * 与 `compareTexts` 的区别：`compareTexts` 是 TextPro 逐字口径（失配后两侧各
- * 进一步，之后会一路错位），适合 F5 一处一处往下校；这条求的是真正的编辑脚本，
- * 两文只差一个字时就只给那一个字，后面恢复对齐的部分不标。
- *
- * 文本过大时后端会退回逐字口径，届时 `approximate` 为 true。
+ * 这与早先那套 TextPro 逐字口径不同：那套在第一处失配之后两侧各进一步，
+ * 后面就一路错位；这里求真正的编辑脚本，改了一个字就只有那一个字。
  */
 export async function compareDiff(
   a: string,

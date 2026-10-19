@@ -5,12 +5,13 @@
 //! JSON**，任何字段改名 / 改大小写都会在这里先炸，而不是等到真实 UI 里
 //! 静默失效。
 //!
-//! 与单测的分工：`core::compare::tests` / `core::merge::tests` 验证
+//! 与单测的分工：`core::text_diff::tests` / `core::merge::tests` 验证
 //! **算法语义**，本文件只验证**跨语言契约**。
 
-use aiotext_editor_lib::core::compare::{self, CompareEnd, CompareOptions, VariantStrictness};
+use aiotext_editor_lib::core::compare::{CompareOptions, VariantStrictness};
 use aiotext_editor_lib::core::data_tables;
 use aiotext_editor_lib::core::merge::{self, MergePlanOptions, MergeStrategy};
+use aiotext_editor_lib::core::text_diff;
 use aiotext_editor_lib::error::AppResult;
 use serde_json::{json, Value};
 
@@ -59,44 +60,38 @@ fn frontend_style_compare_options_parse() {
 }
 
 #[test]
-fn compare_report_shape_is_stable() {
+fn diff_result_shape_is_stable() {
     let tables = data_tables::load_variant_tables(None).unwrap();
     let opts = CompareOptions::default();
-    let report = compare::compare("甲乙丙", "甲X丙", &opts, &tables);
-    let value = serde_json::to_value(&report).expect("报告应可序列化");
+    let result = text_diff::diff("甲乙丙", "甲X丙", &opts, &tables);
+    let value = serde_json::to_value(&result).expect("结果应可序列化");
 
     assert_eq!(
         keys(&value),
-        vec![
-            "differences",
-            "end",
-            "remainingA",
-            "remainingB",
-            "truncated",
-        ],
-        "CompareReport 字段必须与前端 TS 接口一致（camelCase）"
+        vec!["blocks", "degraded", "truncated"],
+        "DiffResult 字段必须与前端 TS 接口一致（camelCase）"
     );
     assert_eq!(
-        keys(&value["differences"][0]),
-        vec!["charA", "charB", "posA", "posB"],
-        "Difference 字段必须与前端 TS 接口一致（camelCase）"
+        keys(&value["blocks"][0]),
+        vec!["lenA", "lenB", "posA", "posB"],
+        "DiffBlock 字段必须与前端 TS 接口一致（camelCase）"
     );
-    assert_eq!(value["differences"][0]["charA"], json!("乙"));
-    assert_eq!(value["differences"][0]["charB"], json!("X"));
-    assert_eq!(value["differences"][0]["posA"], json!(1));
-    assert_eq!(value["end"], json!("bothEnded"));
+    // 「乙 → X」是换掉一个字：算一处（工具条上的「第 i/N 处」就是这么数的）
+    assert_eq!(
+        value["blocks"].as_array().expect("blocks 应是数组").len(),
+        1
+    );
+    assert_eq!(value["blocks"][0]["posA"], json!(1));
+    assert_eq!(value["blocks"][0]["lenA"], json!(1));
+    assert_eq!(value["blocks"][0]["lenB"], json!(1));
+    assert_eq!(value["truncated"], json!(false));
+    assert_eq!(value["degraded"], json!(false));
 
-    // 结束原因的取值（前端据此提示「已完成 / A 方先到尾部 / …」）
-    let a_ended = serde_json::to_value(CompareEnd::AEnded).unwrap();
-    assert_eq!(a_ended, json!("aEnded"));
-    let truncated = serde_json::to_value(CompareEnd::Truncated).unwrap();
-    assert_eq!(truncated, json!("truncated"));
-
-    // None 字符序列化为 null（前端用可空字符串接收）
-    let terminal = compare::compare("甲", "甲乙", &opts, &tables);
+    // 尾部多出来的字：一处「只有一侧」的差异
+    let terminal = text_diff::diff("甲", "甲乙", &opts, &tables);
     let value = serde_json::to_value(&terminal).unwrap();
-    assert_eq!(value["differences"][0]["charA"], Value::Null);
-    assert_eq!(value["remainingB"], json!(1));
+    assert_eq!(value["blocks"][0]["lenA"], json!(0));
+    assert_eq!(value["blocks"][0]["lenB"], json!(1));
 }
 
 // ---------------------------------------------------------------------------

@@ -48,7 +48,7 @@ import {
   batchCancel,
   batchPlan,
   batchRun,
-  compareTexts,
+  compareDiff,
   convertOpencc,
   deleteReplaceTable,
   importTextproTab,
@@ -509,22 +509,22 @@ describe('BRACKET_PRESETS', () => {
 });
 
 describe('F-06 文件比较接口', () => {
-  it('compareTexts 以 camelCase 选项调用 compare_texts', async () => {
+  it('compareDiff 以 camelCase 选项调用 compare_diff', async () => {
     invokeMock.mockResolvedValue({
-      differences: [{ posA: 1, posB: 1, charA: '乙', charB: 'X' }],
+      blocks: [{ posA: 1, posB: 1, lenA: 1, lenB: 1 }],
       truncated: false,
-      end: 'bothEnded',
-      remainingA: 0,
-      remainingB: 0,
+      degraded: false,
     });
-    const report = await compareTexts('甲乙丙', '甲X丙', DEFAULT_COMPARE_OPTIONS);
-    expect(invokeMock).toHaveBeenCalledWith('compare_texts', {
+    const result = await compareDiff('甲乙丙', '甲X丙', DEFAULT_COMPARE_OPTIONS);
+    expect(invokeMock).toHaveBeenCalledWith('compare_diff', {
       a: '甲乙丙',
       b: '甲X丙',
       opts: DEFAULT_COMPARE_OPTIONS,
     });
-    expect(report.differences[0]).toMatchObject({ posA: 1, charA: '乙', charB: 'X' });
-    expect(report.end).toBe('bothEnded');
+    // 「乙 → X」是换了一个字：一处差异，两侧各一个字
+    expect(result.blocks).toHaveLength(1);
+    expect(result.blocks[0]).toEqual({ posA: 1, posB: 1, lenA: 1, lenB: 1 });
+    expect(result.degraded).toBe(false);
   });
 
   it('默认比较选项：全不忽略、逐字比较（与后端 Default 一致）', () => {
