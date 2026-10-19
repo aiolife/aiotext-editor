@@ -20,3 +20,6 @@ src-tauri/gen/schemas/
 
 # TextPro 的参考素材（第三方资料，只作本地查阅，不入库）
 TextPro65/
+# 构建产物与前次遗留的文件（不入库）
+*.deb
+$null
