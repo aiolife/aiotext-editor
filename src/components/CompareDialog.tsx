@@ -37,12 +37,13 @@ export function CompareDialog({ tabs, activeName, onStart, onCancel }: CompareDi
       <div className="dialog">
         <h2 className="dialog-title">文件比较</h2>
         <p className="dialog-text">
-          「{activeName}」为 A 窗，对照文本在 B 窗显示（只读）。开始后 F5 跳下一处差异，
-          Shift+F5 从两个光标处重新比较。
+          「{activeName}」为 A 侧，所选标签在 B 侧显示。开始后 F5 跳下一处差异，
+          Shift+F5 从两个光标处重新比较；进入后点哪格、哪格就是目标窗（可编辑），
+          另一格转为对照窗（只读）。
         </p>
         <div className="dialog-body compare-dialog">
           <label className="dialog-field">
-            <span>对照标签（B 窗）</span>
+            <span>对照标签（B 侧）</span>
             <select
               value={targetTabId}
               onChange={(e) => setTargetTabId(e.target.value)}

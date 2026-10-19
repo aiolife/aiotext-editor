@@ -85,8 +85,10 @@ interface EditorProps {
   highlights?: SearchHighlight[];
   /** 外部编辑器命令（撤销 / 重做 / 跳转）：按 nonce 触发一次 */
   commandRequest?: EditorCommand | null;
-  /** 只读（F-06 比较窗格：可看可选不可改） */
+  /** 只读（F-06 比较对照窗：可看可选不可改）。目标窗切换时可在运行时翻转 */
   readOnly?: boolean;
+  /** 比较差异标红（F-06 §6.2） */
+  diffMarks?: DiffMark[];
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +120,54 @@ const highlightField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+// ---------------------------------------------------------------------------
+// 比较差异标红（F-06 §6.2）
+//
+// 与搜索命中高亮分开：两者含义不同（「查到了」与「两文不一致」），
+// 共用一套 decoration 会让配色相互覆盖。
+// ---------------------------------------------------------------------------
+
+export interface DiffMark {
+  start: number;
+  end: number;
+  /**
+   * `missing` = 这一处本窗没有、对面窗有（对方多出来的字标在对方那边）；
+   * `extra`   = 本窗多出、对面窗没有。
+   */
+  kind: 'missing' | 'extra';
+}
+
+const setDiffMarks = StateEffect.define<DiffMark[]>();
+
+/**
+ * 差异装饰用 RangeSet：它是分块稀疏结构，**只有视口内的装饰才真正绘制**，
+ * 所以标全部差异也不会随文档长度线性变慢。上限由后端截断（5000 处）兜住。
+ */
+const diffMarkField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, transaction) {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setDiffMarks)) continue;
+      const docLength = transaction.state.doc.length;
+      const ranges: Range<Decoration>[] = [];
+      for (const mark of effect.value) {
+        const from = Math.max(0, Math.min(mark.start, docLength));
+        const to = Math.max(from, Math.min(mark.end, docLength));
+        if (to <= from) continue;
+        const className =
+          mark.kind === 'missing' ? 'cm-diff-mark cm-diff-missing' : 'cm-diff-mark cm-diff-extra';
+        ranges.push(Decoration.mark({ class: className }).range(from, to));
+      }
+      // Decoration.set 的第二参数要求已按位置排序
+      ranges.sort((a, b) => a.from - b.from || a.to - b.to);
+      next = Decoration.set(ranges, true);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 /**
  * F-11 外观设置的作用点（行号 / 自动换行 / 缩进宽度）。
  *
@@ -131,6 +181,16 @@ const lineNumberCompartment = new Compartment();
 const wrapCompartment = new Compartment();
 const indentCompartment = new Compartment();
 const invisibleCompartment = new Compartment();
+/**
+ * 只读也走 Compartment：比较模式里目标窗可以在两格之间切换，
+ * 固定成挂载时的常量就切不动了（重建 state 又会丢撤销历史与滚动位置）。
+ */
+const readOnlyCompartment = new Compartment();
+
+/** 只读窗格：可看可选不可改 */
+function readOnlyExt(readOnly: boolean) {
+  return readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
+}
 
 function lineNumberExt(show: boolean) {
   return show ? lineNumbers() : [];
@@ -262,6 +322,7 @@ export function Editor({
   highlights,
   commandRequest,
   readOnly,
+  diffMarks,
 }: EditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -389,6 +450,22 @@ export function Editor({
     view.dispatch({ effects: setHighlights.of(highlights ?? []) });
   }, [highlights]);
 
+  // 比较差异标红（文档变更时由 decoration 映射自动跟随）
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setDiffMarks.of(diffMarks ?? []) });
+  }, [diffMarks]);
+
+  // 目标窗切换：只读状态原地翻转（用 layout 时机，避免切换时闪一帧）
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: readOnlyCompartment.reconfigure(readOnlyExt(readOnly ?? false)),
+    });
+  }, [readOnly]);
+
   // 外部选区请求（查找下一个 / 上一个）
   useEffect(() => {
     const view = viewRef.current;
@@ -453,10 +530,8 @@ export function Editor({
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         highlightField,
-        // 只读窗格（比较对照）：可看可选不可改
-        ...(readOnlyRef.current
-          ? [EditorState.readOnly.of(true), EditorView.editable.of(false)]
-          : []),
+        diffMarkField,
+        readOnlyCompartment.of(readOnlyExt(readOnlyRef.current)),
         EditorView.updateListener.of((update) => {
           // 始终以「当前标签」为准（组件实例跨标签复用）
           const id = tabRef.current.id;

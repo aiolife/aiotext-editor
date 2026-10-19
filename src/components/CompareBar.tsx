@@ -8,6 +8,8 @@ interface CompareBarProps {
   report: CompareReport | null;
   /** 当前定位的差异下标（无则 -1） */
   index: number;
+  /** 哪一格是当前目标窗（可编辑的那一侧） */
+  target: 'a' | 'b';
   aName: string;
   bName: string;
   onPrev: () => void;
@@ -24,15 +26,23 @@ function charLabel(value: string | null): string {
   return value === '\n' ? '␊' : value;
 }
 
-function endHint(report: CompareReport | null): string {
+/**
+ * 差异数据里的 A / B 是两侧的固定记号（不随目标窗切换而变），
+ * 显示时才翻译成用户看到的角色名。
+ */
+function roleOf(pane: 'a' | 'b', target: 'a' | 'b'): string {
+  return pane === target ? '目标' : '对照';
+}
+
+function endHint(report: CompareReport | null, target: 'a' | 'b'): string {
   if (!report) {
     return '';
   }
   if (report.end === 'aEnded') {
-    return `A 窗先到尾部，B 窗还剩 ${report.remainingB} 字`;
+    return `${roleOf('a', target)}窗先到尾部，${roleOf('b', target)}窗还剩 ${report.remainingB} 字`;
   }
   if (report.end === 'bEnded') {
-    return `B 窗先到尾部，A 窗还剩 ${report.remainingA} 字`;
+    return `${roleOf('b', target)}窗先到尾部，${roleOf('a', target)}窗还剩 ${report.remainingA} 字`;
   }
   if (report.end === 'truncated') {
     return `差异过多，仅显示前 ${report.differences.length} 处`;
@@ -43,6 +53,7 @@ function endHint(report: CompareReport | null): string {
 export function CompareBar({
   report,
   index,
+  target,
   aName,
   bName,
   onPrev,
@@ -60,21 +71,24 @@ export function CompareBar({
       <div className="compare-bar-head">
         <strong>比较中</strong>
         <span>
-          A「{aName}」 ↔ B「{bName}」
+          {roleOf('a', target)}「{aName}」 ↔ {roleOf('b', target)}「{bName}」
         </span>
       </div>
       <div className="compare-bar-status">
         {report === null ? (
           <span>正在比较…</span>
         ) : total === 0 ? (
-          <span>未发现不一致（{endHint(report)}）</span>
+          <span>未发现不一致（{endHint(report, target)}）</span>
         ) : (
           <span>
             差异 {index + 1}/{total}
             {current ? (
-              <>：A『{charLabel(current.charA)}』↔ B『{charLabel(current.charB)}』</>
+              <>
+                ：{roleOf('a', target)}『{charLabel(current.charA)}』↔{' '}
+                {roleOf('b', target)}『{charLabel(current.charB)}』
+              </>
             ) : null}
-            {report.truncated ? '（已截断）' : ''} · {endHint(report)}
+            {report.truncated ? '（已截断）' : ''} · {endHint(report, target)}
           </span>
         )}
       </div>

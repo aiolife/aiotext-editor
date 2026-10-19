@@ -23,6 +23,7 @@ import {
   type ToolMeta,
 } from '../platform/tauriApi';
 import type { SearchHighlight } from './Editor';
+import { escapeForFind } from '../shared/findText';
 
 interface SearchPanelProps {
   /** 当前标签正文（查找/替换的作用对象） */
@@ -43,7 +44,12 @@ interface SearchPanelProps {
    * 布尔值第二次就无效了。`Ctrl+F` / `Ctrl+H` 也走这里，从而能直接落到
    * 查找框或替换框上——不必给面板再加一套 ref 转发。
    */
-  external?: { kind: 'next' | 'prev' | 'focusFind' | 'focusReplace'; nonce: number } | null;
+  external?: {
+    kind: 'next' | 'prev' | 'focusFind' | 'focusReplace';
+    nonce: number;
+    /** 要填进查找框的文字（用户在编辑器里选中了文字才带过来） */
+    text?: string;
+  } | null;
 }
 
 const OPTION_ITEMS: { key: keyof RegexOptions; label: string }[] = [
@@ -66,6 +72,8 @@ export function SearchPanel({
 }: SearchPanelProps) {
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
+  /** 外部填入查找词后自动查找的序号（0 = 还没被填过） */
+  const [autoFind, setAutoFind] = useState(0);
   /** 「使用工具」：非空时替换内容 = 该工具对命中文本的处理结果 */
   const [toolId, setToolId] = useState<ToolId | ''>('');
   const [opts, setOpts] = useState<RegexOptions>(DEFAULT_REGEX_OPTIONS);
@@ -164,6 +172,17 @@ export function SearchPanel({
   useEffect(() => {
     if (external === null || external.nonce === externalNonceRef.current) return;
     externalNonceRef.current = external.nonce;
+    // 先选中文字、再开面板：把选中的文字直接带进查找框。
+    // 空选区一个字都不动 —— 否则用户边输入边被覆盖，那是很难用的 bug。
+    if (external.text) {
+      const escaped = escapeForFind(external.text);
+      // 转义改了内容，说明原文里带元字符或换行，那就只能按正则查
+      if (escaped !== external.text) {
+        setOpts((prev) => ({ ...prev, regex: true }));
+      }
+      setFindText(escaped);
+      setAutoFind((n) => n + 1);
+    }
     switch (external.kind) {
       case 'next':
         step(1);
@@ -179,6 +198,19 @@ export function SearchPanel({
         break;
     }
   }, [external, step]);
+
+  /**
+   * 外部填入查找词后自动跑一次查找。
+   *
+   * 单独一轮 effect：`setFindText` 之后紧接着调 `runFind` 的话，
+   * 闭包里拿到的还是旧词；等这一轮渲染完成再查，才是刚填进去的那个。
+   */
+  useEffect(() => {
+    if (autoFind === 0) return;
+    void runFind(false);
+    // 只在「外部填入」时触发，不跟随 runFind 的重建
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFind]);
 
   /** 替换当前这一个（精确到区间，光标不跳） */
   const replaceCurrent = useCallback(async () => {

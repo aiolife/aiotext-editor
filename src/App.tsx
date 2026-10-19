@@ -82,6 +82,8 @@ import type { ConvertTarget } from './components/ConvertDialog';
 import { SearchPanel } from './components/SearchPanel';
 import { ToolOptionsDialog } from './components/ToolOptionsDialog';
 import { CompareBar } from './components/CompareBar';
+import { paneRole, buildDiffMarks, type PaneMarks } from './shared/compareView';
+import { SELECTION_FILL_LIMIT } from './shared/findText';
 
 /**
  * 对话框按需加载（v0.9 启动优化）
@@ -226,6 +228,14 @@ interface ConvertDialogCtx {
   target: ConvertTarget;
 }
 
+/** 比较会话的核心部分（两侧标签 + 当前目标窗） */
+interface CompareCtx {
+  aTabId: string;
+  bTabId: string;
+  /** 哪一格是当前可编辑的目标窗 */
+  target: 'a' | 'b';
+}
+
 /** 整理工具选项对话框上下文（同样快照内容，避免跨标签误写） */
 interface ToolDialogCtx {
   tabId: string;
@@ -283,20 +293,29 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState<SettingsTab | null>(null);
   /** 第九阶段：帮助与快捷键对话框（F1 / 帮助菜单） */
   const [helpOpen, setHelpOpen] = useState(false);
-  /** 外部驱动的查找面板命令（F3 / Shift+F3 / Ctrl+H 聚焦替换框） */
+  /** 外部驱动的查找面板命令（F3 / Shift+F3 / Ctrl+F / Ctrl+H）；`text` 是选区预填的文字 */
   const [searchExternal, setSearchExternal] = useState<{
     kind: 'next' | 'prev' | 'focusFind' | 'focusReplace';
     nonce: number;
+    text?: string;
   } | null>(null);
-  /** 比较会话：B 窗对照标签 + 选项 + 平铺方向 */
+  /**
+   * 比较会话。两侧标签各自记 id —— **不能借 activeTabId 推**：
+   * 目标窗会切换、激活标签跟着走，那样 A 窗会渲染成 B 的内容。
+   * `target` 指出哪一格是当前可编辑的目标窗，另一格为对照窗（只读）。
+   */
   const [compare, setCompare] = useState<{
-    targetTabId: string;
+    aTabId: string;
+    bTabId: string;
     opts: CompareOptions;
     orientation: 'vertical' | 'horizontal';
+    target: 'a' | 'b';
   } | null>(null);
   const [compareReport, setCompareReport] = useState<CompareReport | null>(null);
   const [diffIndex, setDiffIndex] = useState(-1);
-  /** B 窗（只读）的选区跳转请求 */
+  /** 差异跳转：A 侧的选区请求（独立一份，不与查找定位共用，见下方渲染） */
+  const [compareSelectionA, setCompareSelectionA] = useState<SelectionRequest | null>(null);
+  /** 差异跳转：B 侧的选区请求 */
   const [compareSelection, setCompareSelection] = useState<SelectionRequest | null>(null);
   /** B 窗当前光标（UTF-16 偏移，「从光标重比」用） */
   const [compareCursor, setCompareCursor] = useState(0);
@@ -996,12 +1015,29 @@ export default function App() {
   // F-06 文件比较（双栏平铺：A = 当前标签，B = 对照标签只读）
   // ---------------------------------------------------------------------
 
-  const compareTab = compare ? (tabs.find((t) => t.id === compare.targetTabId) ?? null) : null;
+  const compareTabA = compare ? (tabs.find((t) => t.id === compare.aTabId) ?? null) : null;
+  const compareTabB = compare ? (tabs.find((t) => t.id === compare.bTabId) ?? null) : null;
+
+  /**
+   * 两窗各自的差异标红。
+   *
+   * 目标窗（可编辑的那一格）是「要改的文件」，所以：
+   * - 目标窗**缺**的字 —— 标在**对照窗**，让人一眼看到「少了这个字」；
+   * - 目标窗**多出**的字 —— 标在**目标窗**，提示这里该删；
+   * - 位置对齐但字不同 —— 两边都标（改动前先看清两边写的什么）。
+   */
+  const diffMarks = useMemo<PaneMarks>(
+    () =>
+      compare && compareReport
+        ? buildDiffMarks(compareReport.differences, compare.target)
+        : { a: [], b: [] },
+    [compare, compareReport],
+  );
 
   /** 跳到某处差异：A、B 两个窗格同时定位（不抢焦点，由状态栏提示） */
   const jumpToDiff = useCallback((diff: CompareDifference) => {
     const nonce = Date.now();
-    setPendingSelection({
+    setCompareSelectionA({
       from: diff.posA,
       to: diff.posA + (diff.charA?.length ?? 0),
       nonce,
@@ -1021,10 +1057,14 @@ export default function App() {
    * 切片比较后把偏移加回起点，落回原文坐标（契约保持 F-06 §6.3 原样）。
    */
   const runCompare = useCallback(
-    async (targetTabId: string, opts: CompareOptions, from: { a: number; b: number } | null) => {
+    async (
+      ctx: CompareCtx,
+      opts: CompareOptions,
+      from: { a: number; b: number } | null,
+    ) => {
       const state = useTabsStore.getState();
-      const aTab = state.tabs.find((t) => t.id === state.activeTabId);
-      const bTab = state.tabs.find((t) => t.id === targetTabId);
+      const aTab = state.tabs.find((t) => t.id === ctx.aTabId);
+      const bTab = state.tabs.find((t) => t.id === ctx.bTabId);
       if (!aTab || !bTab) return;
       try {
         const a = from ? aTab.content.slice(from.a) : aTab.content;
@@ -1042,7 +1082,7 @@ export default function App() {
           jumpToDiff(report.differences[0]);
           const first = report.differences[0];
           setNotice(
-            `发现 ${report.differences.length} 处不一致：第 1 处 A『${first.charA ?? '（尾部）'}』↔ B『${first.charB ?? '（尾部）'}』（F5 下一处，Shift+F5 从光标重比）`,
+            `发现 ${report.differences.length} 处不一致：第 1 处 ${paneRole('a', ctx.target)}『${first.charA ?? '（尾部）'}』↔ ${paneRole('b', ctx.target)}『${first.charB ?? '（尾部）'}』（F5 下一处，Shift+F5 从光标重比）`,
           );
         } else {
           setDiffIndex(-1);
@@ -1050,10 +1090,10 @@ export default function App() {
             report.end === 'bothEnded'
               ? '两文一致'
               : report.end === 'aEnded'
-                ? `A 窗先到尾部，B 窗还剩 ${report.remainingB} 字`
+                ? `${paneRole('a', ctx.target)}先到尾部，${paneRole('b', ctx.target)}还剩 ${report.remainingB} 字`
                 : report.end === 'truncated'
                   ? '差异过多，报告已截断'
-                  : `B 窗先到尾部，A 窗还剩 ${report.remainingA} 字`;
+                  : `${paneRole('b', ctx.target)}先到尾部，${paneRole('a', ctx.target)}还剩 ${report.remainingA} 字`;
           setNotice(`比较完成：${endHint}`);
         }
       } catch (e) {
@@ -1065,13 +1105,16 @@ export default function App() {
 
   const handleStartCompare = useCallback(
     (targetTabId: string, opts: CompareOptions, orientation: 'vertical' | 'horizontal') => {
+      if (!activeTabId) return;
       setCompareDialogOpen(false);
       setError(null);
-      setCompare({ targetTabId, opts, orientation });
+      // 发起比较时，当前激活标签就是 A 侧；目标窗默认落在它身上
+      const ctx: CompareCtx = { aTabId: activeTabId, bTabId: targetTabId, target: 'a' };
+      setCompare({ ...ctx, opts, orientation });
       setCompareCursor(0);
-      void runCompare(targetTabId, opts, null);
+      void runCompare(ctx, opts, null);
     },
-    [runCompare],
+    [activeTabId, runCompare],
   );
 
   const goNextDiff = useCallback(() => {
@@ -1095,23 +1138,40 @@ export default function App() {
   /** 重选同步起点：以两个窗格的当前光标为起点重新比较 */
   const restartCompare = useCallback(() => {
     if (!compare) return;
-    const aCursor = selection && selection.tabId === activeTabId ? selection.from : 0;
-    void runCompare(compare.targetTabId, compare.opts, { a: aCursor, b: compareCursor });
-  }, [compare, selection, activeTabId, compareCursor, runCompare]);
+    const aCursor = selection && selection.tabId === compare.aTabId ? selection.from : 0;
+    void runCompare(compare, compare.opts, { a: aCursor, b: compareCursor });
+  }, [compare, selection, compareCursor, runCompare]);
 
   const exitCompare = useCallback(() => {
     setCompare(null);
     setCompareReport(null);
     setDiffIndex(-1);
+    setCompareSelectionA(null);
     setCompareSelection(null);
     setCompareCursor(0);
   }, []);
 
-  // 对照标签被关闭时退出比较模式
+  /**
+   * 点哪格、哪格就是目标窗：那一格转为可编辑，另一格转为对照（只读）。
+   *
+   * 激活标签**必须**跟着切 —— 否则在 B 窗改完按 Ctrl+S，存的是 A 窗那个文件，
+   * 改动会凭空消失。这一条是「跟着切」的真正理由，不只是让标签栏高亮对上。
+   */
+  const focusComparePane = useCallback(
+    (pane: 'a' | 'b') => {
+      if (!compare || compare.target === pane) return;
+      setCompare((c) => (c ? { ...c, target: pane } : c));
+      useTabsStore.getState().activateTab(pane === 'a' ? compare.aTabId : compare.bTabId);
+    },
+    [compare],
+  );
+
+  // 任意一侧的标签被关闭就退出比较模式（两侧都得还在）
   useEffect(() => {
-    if (compare && !tabs.some((t) => t.id === compare.targetTabId)) {
-      exitCompare();
-    }
+    if (!compare) return;
+    const alive =
+      tabs.some((t) => t.id === compare.aTabId) && tabs.some((t) => t.id === compare.bTabId);
+    if (!alive) exitCompare();
   }, [compare, tabs, exitCompare]);
 
   // ---------- F-11 命令分发器 ----------
@@ -1120,12 +1180,30 @@ export default function App() {
   const bindings = useMemo(() => resolveBindings(shortcuts), [shortcuts]);
   const conflictWarnedRef = useRef<string>('');
 
-  /** 外部驱动查找面板（F3 / Shift+F3 / Ctrl+H 聚焦替换框）的序号 */
+  /**
+   * 当前选中的文字（供查找 / 替换面板预填）。
+   *
+   * 用 ref 而不是列进命令表的依赖：选区每动一下就重建整套命令表不值得，
+   * 而按下 Ctrl+F 那一刻读到的必须是最新值。
+   */
+  const selectedTextRef = useRef('');
+  useEffect(() => {
+    const raw =
+      activeTab && selectionRange
+        ? activeTab.content.slice(selectionRange.from, selectionRange.to)
+        : '';
+    selectedTextRef.current = raw.length <= SELECTION_FILL_LIMIT ? raw : '';
+  }, [activeTab, selectionRange]);
+
+  /** 外部驱动查找面板（F3 / Shift+F3 / Ctrl+F / Ctrl+H）的序号 */
   const externalNonceRef = useRef(0);
-  const driveSearch = useCallback((kind: 'next' | 'prev' | 'focusFind' | 'focusReplace') => {
-    externalNonceRef.current += 1;
-    setSearchExternal({ kind, nonce: externalNonceRef.current });
-  }, []);
+  const driveSearch = useCallback(
+    (kind: 'next' | 'prev' | 'focusFind' | 'focusReplace', text = '') => {
+      externalNonceRef.current += 1;
+      setSearchExternal({ kind, nonce: externalNonceRef.current, text });
+    },
+    [],
+  );
 
   /**
    * 命令 → 做什么。键必须是 `shortcuts.ts` 注册表里的 ID（注册表与这里的
@@ -1172,14 +1250,15 @@ export default function App() {
       // 搜索
       'search.find': {
         run: () => {
-          driveSearch('focusFind');
+          // 选好了文字再按 Ctrl+F：直接带进查找框，省掉一次复制粘贴
+          driveSearch('focusFind', selectedTextRef.current);
           setSearchOpen(true);
         },
         enabled: () => activeTab !== null,
       },
       'search.replace': {
         run: () => {
-          driveSearch('focusReplace');
+          driveSearch('focusReplace', selectedTextRef.current);
           setSearchOpen(true);
         },
         enabled: () => activeTab !== null,
@@ -1419,7 +1498,7 @@ export default function App() {
             external={searchExternal}
           />
         )}
-        {activeTab && compare && compareTab ? (
+        {compare && compareTabA && compareTabB ? (
           <div
             className={
               compare.orientation === 'vertical'
@@ -1427,28 +1506,53 @@ export default function App() {
                 : 'compare-split compare-split-h'
             }
           >
-            <div className="compare-pane">
-              <div className="compare-pane-title">A · {activeTab.fileName || '未命名'}</div>
+            {/* 点哪格、哪格就是目标窗：那一格可编辑，另一格自动转对照（只读） */}
+            <div
+              className={`compare-pane${compare.target === 'a' ? ' compare-pane-target' : ''}`}
+              onMouseDown={() => focusComparePane('a')}
+            >
+              <div className="compare-pane-title">
+                {paneRole('a', compare.target)} · {compareTabA.fileName || '未命名'}
+              </div>
               <Editor
-                tab={activeTab}
+                tab={compareTabA}
+                readOnly={compare.target !== 'a'}
+                diffMarks={diffMarks.a}
                 onContentChange={setContent}
                 onCursorChange={setCursor}
                 onSelectionChange={(id, from, to) => setSelection({ tabId: id, from, to })}
-                pendingEdit={pendingEdit}
-                pendingSelection={pendingSelection}
-                commandRequest={editorCommand}
-                highlights={highlights}
+                // 查找 / 转换 / 撤销这些只作用于目标窗，别写进只读的那一格
+                pendingEdit={compare.target === 'a' ? pendingEdit : null}
+                pendingSelection={
+                  compare.target === 'a' ? (pendingSelection ?? compareSelectionA) : compareSelectionA
+                }
+                commandRequest={compare.target === 'a' ? editorCommand : null}
+                highlights={compare.target === 'a' ? highlights : []}
               />
             </div>
-            <div className="compare-pane">
-              <div className="compare-pane-title">B · {compareTab.fileName || '未命名'}（只读）</div>
+            <div
+              className={`compare-pane${compare.target === 'b' ? ' compare-pane-target' : ''}`}
+              onMouseDown={() => focusComparePane('b')}
+            >
+              <div className="compare-pane-title">
+                {paneRole('b', compare.target)} · {compareTabB.fileName || '未命名'}
+              </div>
               <Editor
-                tab={compareTab}
-                readOnly
+                tab={compareTabB}
+                readOnly={compare.target !== 'b'}
+                diffMarks={diffMarks.b}
                 onContentChange={setContent}
                 onCursorChange={setCursor}
-                onSelectionChange={(_id, from) => setCompareCursor(from)}
-                pendingSelection={compareSelection}
+                onSelectionChange={(id, from, to) => {
+                  setSelection({ tabId: id, from, to });
+                  setCompareCursor(from);
+                }}
+                pendingEdit={compare.target === 'b' ? pendingEdit : null}
+                pendingSelection={
+                  compare.target === 'b' ? (pendingSelection ?? compareSelection) : compareSelection
+                }
+                commandRequest={compare.target === 'b' ? editorCommand : null}
+                highlights={compare.target === 'b' ? highlights : []}
               />
             </div>
           </div>
@@ -1472,8 +1576,9 @@ export default function App() {
           <CompareBar
             report={compareReport}
             index={diffIndex}
-            aName={activeTab?.fileName || '未命名'}
-            bName={compareTab?.fileName || '未命名'}
+            target={compare.target}
+            aName={compareTabA?.fileName || '未命名'}
+            bName={compareTabB?.fileName || '未命名'}
             onPrev={goPrevDiff}
             onNext={goNextDiff}
             onRestart={restartCompare}

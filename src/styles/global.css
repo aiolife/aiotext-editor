@@ -921,6 +921,30 @@ body,
   outline: 1px solid rgba(230, 81, 0, 0.9);
 }
 
+/*
+ * 比较差异标红（F-06）：目标窗缺的字标在**对照窗**、多出的字标在**目标窗**。
+ *
+ * 这里用固定色值而不是系统色 —— 「标红」的语义要求它必须是红的；
+ * 取的是在深浅两套主题下都读得清的中红。
+ */
+.cm-diff-mark {
+  border-radius: 2px;
+  background: rgba(229, 72, 77, 0.22);
+  color: #e5484d;
+}
+
+/* 目标窗缺这个字（标在对照窗）：下划线 —— 提示补进去 */
+.cm-diff-missing {
+  text-decoration: underline;
+  text-decoration-color: #e5484d;
+}
+
+/* 目标窗多出这个字（标在目标窗）：删除线 —— 提示通常要删掉 */
+.cm-diff-extra {
+  text-decoration: line-through;
+  text-decoration-color: #e5484d;
+}
+
 /* ---------- 替换表管理对话框（F-04） ---------- */
 
 .dialog-table {
@@ -1427,6 +1451,14 @@ body,
 .compare-pane .editor-host {
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/*
+ * 目标窗（可编辑的那一格）浅蓝外框：一眼看出「现在改的是哪一格」。
+ * 用 inset 阴影而不是 border —— 不占布局空间，切换目标窗时两格不会跳动。
+ */
+.compare-pane-target {
+  box-shadow: inset 0 0 0 2px rgba(56, 139, 253, 0.7);
 }
 
 .compare-bar {
