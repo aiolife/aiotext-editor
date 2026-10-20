@@ -556,6 +556,8 @@ export interface ToolOptions {
   dedupPunct?: boolean;
   ellipsisAndDash?: boolean;
   digitUnit?: boolean;
+  mathSymbol?: boolean;
+  halfBracket?: boolean;
   /** 技术文档 */
   headingSpace?: boolean;
   listMarker?: boolean;
@@ -690,7 +692,8 @@ export const TOOL_OPTION_DEFAULTS: Record<ToolId, ToolOptions> = {
     cjkDigit: true,
     squeezeSpaces: true,
     trimEnd: true,
-    indent: 2,
+    // 默认不动缩进：网文稿件多半已经带着缩进，再补一遍就成了双份
+    indent: 0,
     skipCode: true,
   },
   chinese_copywriting: {
@@ -700,6 +703,10 @@ export const TOOL_OPTION_DEFAULTS: Record<ToolId, ToolOptions> = {
     dedupPunct: true,
     ellipsisAndDash: true,
     digitUnit: true,
+    mathSymbol: true,
+    halfBracket: true,
+    // 与网文排版相反：中文文案排的是要发布 / 印刷的稿子，默认空两格
+    indent: 2,
   },
   tech_doc_layout: {
     headingSpace: true,

@@ -82,7 +82,13 @@ import type { ConvertTarget } from './components/ConvertDialog';
 import { SearchPanel } from './components/SearchPanel';
 import { ToolOptionsDialog } from './components/ToolOptionsDialog';
 import { CompareBar } from './components/CompareBar';
-import { paneRole, buildDiffMarks, diffStats, type PaneMarks } from './shared/compareView';
+import {
+  paneRole,
+  buildDiffMarks,
+  diffStats,
+  mapToOpposite,
+  type PaneMarks,
+} from './shared/compareView';
 import { SELECTION_FILL_LIMIT } from './shared/findText';
 
 /**
@@ -1052,6 +1058,26 @@ export default function App() {
     [compare, diffResult],
   );
 
+  /**
+   * 逐字对照标蓝（F-06）：选中一侧的字，两侧**对应的位置**一起标蓝。
+   *
+   * 选中发生在哪一侧，那一侧标的就是用户选中的区间，另一侧标的是换算过去的
+   * 位置 —— 切到另一窗选中时同理，只是方向反过来。
+   * 只有光标没框选时按一个码元算：点一下也能看到它落在对面的哪儿。
+   */
+  const pairMarks = useMemo(() => {
+    if (!compare || !diffResult || !selection) return null;
+    const isA = selection.tabId === compare.aTabId;
+    const isB = selection.tabId === compare.bTabId;
+    if (!isA && !isB) return null;
+    const from = selection.from;
+    const to = Math.max(selection.to, from + 1);
+    const other = mapToOpposite(diffResult.blocks, from, to, isA ? 'a' : 'b');
+    // 对侧若是「无对应」的一端（长度 0），也给它一格宽度，否则看不见
+    const mapped = other.to > other.from ? other : { from: other.from, to: other.from + 1 };
+    return isA ? { a: { from, to }, b: mapped } : { a: mapped, b: { from, to } };
+  }, [compare, diffResult, selection]);
+
   /** 跳到某处差异：A、B 两个窗格同时定位（不抢焦点，由状态栏提示） */
   const jumpToDiff = useCallback((blk: DiffBlock) => {
     const nonce = Date.now();
@@ -1545,6 +1571,7 @@ export default function App() {
                 tab={compareTabA}
                 readOnly={compare.target !== 'a'}
                 diffMarks={diffMarks.a}
+                pairMark={pairMarks?.a ?? null}
                 onContentChange={setContent}
                 onCursorChange={setCursor}
                 onSelectionChange={handleSelectionChange}
@@ -1568,6 +1595,7 @@ export default function App() {
                 tab={compareTabB}
                 readOnly={compare.target !== 'b'}
                 diffMarks={diffMarks.b}
+                pairMark={pairMarks?.b ?? null}
                 onContentChange={setContent}
                 onCursorChange={setCursor}
                 onSelectionChange={(id, from, to, external) => {

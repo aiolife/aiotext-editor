@@ -318,6 +318,9 @@ pub struct SpacingOptions {
     /// 清理行尾空格
     pub trim_end: bool,
     /// 段首缩进（全角空格个数，0 = 不动缩进）
+    ///
+    /// 默认 **0**（不动）：网文稿件大多是别处写好了粘过来，正文里常常已经带
+    /// 着缩进，再补一遍就成了双份。要缩进就在选项里填个数。
     pub indent: usize,
     /// 跳过 URL 与反引号内的代码（默认开启）
     pub skip_code: bool,
@@ -330,7 +333,7 @@ impl Default for SpacingOptions {
             cjk_digit: true,
             squeeze_spaces: true,
             trim_end: true,
-            indent: 2,
+            indent: 0,
             skip_code: true,
         }
     }
@@ -352,6 +355,15 @@ pub struct CopywritingOptions {
     pub ellipsis_and_dash: bool,
     /// 数字与英文单位之间补空格（100kg → 100 kg）
     pub digit_unit: bool,
+    /// 数学符号两侧补空格（E=mc² → E = mc²）
+    pub math_symbol: bool,
+    /// 半角括号前后补空格（Decision Tree(DT) → Decision Tree (DT)）
+    pub half_bracket: bool,
+    /// 段首缩进（全角空格个数，0 = 不动缩进）
+    ///
+    /// 这里默认是 **2**（与网文排版默认的 0 相反）：中文文案排的是「要印刷 /
+    /// 要发布」的稿子，段首空两格是中文排版的常态。
+    pub indent: usize,
 }
 
 impl Default for CopywritingOptions {
@@ -363,6 +375,9 @@ impl Default for CopywritingOptions {
             dedup_punct: true,
             ellipsis_and_dash: true,
             digit_unit: true,
+            math_symbol: true,
+            half_bracket: true,
+            indent: 2,
         }
     }
 }
@@ -2141,9 +2156,16 @@ fn normalize_punctuation(text: &str, o: &PunctOptions) -> StepOutcome {
 }
 
 /// 数字与英文单位之间补空格（100kg → 100 kg）
+///
+/// 单位表一律存**小写**（比对的文本已折成小写），并且取**最长**匹配 —— 否则
+/// `10mbps` 会先撞上 `mb` 只补出一个空格就算完事。
+///
+/// 度数与百分号是**显式排除**的：`37°C`、`65%` 都不加空格。这两个符号本来也
+/// 不在表里，但写明白才不会日后往表里加个 `c`（摄氏度）就误伤了 `37°C`。
 fn space_digit_unit(line: &str) -> (String, usize) {
-    const UNITS: [&str; 12] = [
-        "kg", "cm", "mm", "km", "px", "ms", "GB", "MB", "KB", "TB", "Hz", "GHz",
+    const UNITS: [&str; 23] = [
+        "kg", "cm", "mm", "km", "px", "ms", "gb", "mb", "kb", "tb", "hz", "ghz", "mbps", "kbps",
+        "khz", "mhz", "db", "dpi", "fps", "rpm", "nm", "lux", "kwh",
     ];
     let lower = line.to_lowercase();
     let chars: Vec<char> = line.chars().collect();
@@ -2160,9 +2182,20 @@ fn space_digit_unit(line: &str) -> (String, usize) {
                 index += 1;
             }
             out.push_str(&chars[start..index].iter().collect::<String>());
-            // 数字后紧跟单位？
-            let rest: String = lower_chars[index..].iter().take(3).collect();
-            if let Some(unit) = UNITS.iter().find(|u| rest.starts_with(*u)) {
+            // 度数 / 百分号紧贴数字，一个空格都不加
+            if matches!(
+                chars.get(index).copied(),
+                Some('°') | Some('℃') | Some('℉') | Some('%') | Some('‰')
+            ) {
+                continue;
+            }
+            // 数字后紧跟单位？（取最长匹配，见函数注释）
+            let rest: String = lower_chars[index..].iter().take(4).collect();
+            if let Some(unit) = UNITS
+                .iter()
+                .filter(|u| rest.starts_with(*u))
+                .max_by_key(|u| u.len())
+            {
                 let len = unit.chars().count();
                 let after = chars.get(index + len).copied();
                 // 单位后面必须是非字母（避免把 kilogram 切成 kg ram）
@@ -2179,9 +2212,102 @@ fn space_digit_unit(line: &str) -> (String, usize) {
     (out, changed)
 }
 
+/// 数学符号两侧补空格（E=mc² → E = mc²、x+y → x + y）
+///
+/// 只对**两侧都紧挨着实在的字**（中文 / 字母 / 数字）的符号动手：单侧的
+/// （`a++`、`-5`）不动，免得把自增运算和负号拆散。已经带空格的（`x + y`）
+/// 也不动 —— 这条规则反过来跑一遍结果不变。
+///
+/// 连字符 `-` 一律不管：日期、连字符、负号三种身份挤在一个字符上，加空格的
+/// 收益远小于误伤的代价。`<` `>` `*` `/` 同理（HTML、Markdown、路径都会撞）。
+fn space_math_symbol(line: &str, skip_code: bool) -> (String, usize) {
+    const SYMBOLS: [char; 7] = ['+', '=', '×', '÷', '≈', '≠', '±'];
+    let chars: Vec<char> = line.chars().collect();
+    let protected = protected_spans(&chars, skip_code);
+    let mut out = String::with_capacity(line.len() + 8);
+    let mut changed = 0usize;
+    for (index, &cur) in chars.iter().enumerate() {
+        let left_ok = index
+            .checked_sub(1)
+            .map(|i| !protected[i] && chars[i] != ' ' && is_solid_char(chars[i]))
+            .unwrap_or(false);
+        let right_ok = chars
+            .get(index + 1)
+            .map(|&c| !protected[index + 1] && c != ' ' && is_solid_char(c))
+            .unwrap_or(false);
+        // 符号前补一个，符号后再补一个 —— 两边都得是实在的字才动
+        if SYMBOLS.contains(&cur) && !protected[index] && left_ok && right_ok {
+            out.push(' ');
+        }
+        out.push(cur);
+        if SYMBOLS.contains(&cur) && !protected[index] && left_ok && right_ok {
+            out.push(' ');
+            changed += 1;
+        }
+    }
+    (out, changed)
+}
+
+/// 一个「实在的字」：中文 / 字母 / 数字。空格与标点不算
+fn is_solid_char(ch: char) -> bool {
+    is_cjk_char(ch) || ch.is_ascii_alphanumeric()
+}
+
+/// 半角括号前后补空格（`Decision Tree(DT)` → `Decision Tree (DT)`）
+///
+/// 判据刻意收紧，只认两种形状：
+/// - 左括号紧挨着**中文**（`使用(MVP)模式` → `使用 (MVP) 模式`）—— 中英混排里
+///   最别扭的就是这个；
+/// - 左括号紧挨着英文 / 数字，且括号里是**缩写形态**（全大写字母、数字、`-`、
+///   `.`，长度 ≤ 8）。小写的一律不动 —— `foo(bar)` 是函数调用，给它加空格反
+///   而错了。
+///
+/// 右括号后面紧挨着中文时补一个空格；闭合后就已是空格的不动（幂等）。
+/// 保护区（URL / 行内代码）里的括号一个都不碰。
+fn space_half_bracket(line: &str, skip_code: bool) -> (String, usize) {
+    let chars: Vec<char> = line.chars().collect();
+    let protected = protected_spans(&chars, skip_code);
+    let mut out = String::with_capacity(line.len() + 8);
+    let mut changed = 0usize;
+    for (index, &cur) in chars.iter().enumerate() {
+        if cur == '(' && !protected[index] {
+            let close = (index + 1..chars.len()).find(|&i| chars[i] == ')');
+            let inner: String = close
+                .map(|c| chars[index + 1..c].iter().collect())
+                .unwrap_or_default();
+            let is_abbrev = !inner.is_empty()
+                && inner.chars().count() <= 8
+                && inner
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-' || c == '.');
+            let prev = index.checked_sub(1).map(|i| chars[i]);
+            let need = matches!(prev, Some(p) if is_cjk_char(p))
+                || matches!(prev, Some(p) if p.is_ascii_alphanumeric() && is_abbrev);
+            if need {
+                out.push(' ');
+                changed += 1;
+            }
+            out.push(cur);
+            continue;
+        }
+        out.push(cur);
+        if cur == ')' && !protected[index] {
+            if let Some(&next) = chars.get(index + 1) {
+                if is_cjk_char(next) {
+                    out.push(' ');
+                    changed += 1;
+                }
+            }
+        }
+    }
+    (out, changed)
+}
+
 /// 中文文案（chinese-copywriting-guidelines 常用子集）
 fn chinese_copywriting(text: &str, o: &CopywritingOptions) -> StepOutcome {
+    let indent_pad = "\u{3000}".repeat(o.indent.min(8));
     let mut changed = 0usize;
+    let mut indented = 0usize;
     let mut current = String::new();
     for (content, term) in split_lines(text) {
         let mut line = content.to_owned();
@@ -2210,6 +2336,11 @@ fn chinese_copywriting(text: &str, o: &CopywritingOptions) -> StepOutcome {
             changed += delta;
             line = fixed;
         }
+        if o.math_symbol {
+            let (fixed, delta) = space_math_symbol(&line, true);
+            changed += delta;
+            line = fixed;
+        }
         // 中英 / 中数空格与「标点后不留空格」共用网文排版的核心
         let spaced = spacing_line(
             &line,
@@ -2223,10 +2354,25 @@ fn chinese_copywriting(text: &str, o: &CopywritingOptions) -> StepOutcome {
             },
         );
         changed += spaced.1;
-        current.push_str(&spaced.0);
+        let mut out = spaced.0;
+        if o.half_bracket {
+            let (fixed, delta) = space_half_bracket(&out, true);
+            changed += delta;
+            out = fixed;
+        }
+        // 段首缩进：已经有缩进的行不动（幂等）
+        if o.indent > 0 && !is_blank(&out) && !starts_with_pad(&out) {
+            indented += 1;
+            out = format!("{indent_pad}{out}");
+        }
+        current.push_str(&out);
         current.push_str(term);
     }
-    note_outcome(current, changed, format!("中文文案规范 {changed} 处"))
+    let mut note = format!("中文文案规范 {changed} 处");
+    if indented > 0 {
+        note.push_str(&format!("，加段首缩进 {indented} 行"));
+    }
+    note_outcome(current, changed + indented, note)
 }
 
 /// 代码围栏行？（``` 或 ~~~ 开头）
@@ -2514,10 +2660,104 @@ mod tests {
             "中文abc混合",
         );
         assert_eq!(no_indent, "中文 abc 混合");
-        // 段首缩进（全角空格 ×2）+ 中数之间补空格
+        // 默认就是 0：网文稿件多半已经带缩进，再补一遍就成了双份
+        assert_eq!(by_id("web_novel_layout", "第1章"), "第 1 章");
+        // 填了个数才加（全角空格 ×2）
+        let with_indent = run(
+            PipelineStep::WebNovelLayout(SpacingOptions {
+                indent: 2,
+                ..SpacingOptions::default()
+            }),
+            "第1章",
+        );
+        assert_eq!(with_indent, "\u{3000}\u{3000}第 1 章");
+    }
+
+    #[test]
+    fn chinese_copywriting_indents_two_spaces_by_default() {
+        // 与网文排版相反：中文文案默认空两格
         assert_eq!(
-            by_id("web_novel_layout", "第1章"),
-            "\u{3000}\u{3000}第 1 章"
+            by_id("chinese_copywriting", "第一段"),
+            "\u{3000}\u{3000}第一段"
+        );
+        // 填 0 就不动
+        let flat = run(
+            PipelineStep::ChineseCopywriting(CopywritingOptions {
+                indent: 0,
+                ..CopywritingOptions::default()
+            }),
+            "第一段",
+        );
+        assert_eq!(flat, "第一段");
+        // 空行不缩进，已经缩进的行也不重复加（幂等）
+        let twice = run(
+            PipelineStep::ChineseCopywriting(CopywritingOptions::default()),
+            "\u{3000}\u{3000}第一段",
+        );
+        assert_eq!(twice, "\u{3000}\u{3000}第一段");
+    }
+
+    #[test]
+    fn digit_unit_covers_mbps_and_skips_degrees_and_percent() {
+        let step = PipelineStep::ChineseCopywriting(CopywritingOptions {
+            indent: 0,
+            space_cjk_latin: false,
+            space_cjk_digit: false,
+            digit_unit: true,
+            math_symbol: false,
+            half_bracket: false,
+            ..CopywritingOptions::default()
+        });
+        // Mbps 原先不在单位表里；°C 与 % 是显式排除的
+        assert_eq!(run(step, "100Mbps与37°C与65%"), "100 Mbps与37°C与65%");
+        // 最长的那个单位优先（mbps 而不是 mb）
+        assert_eq!(
+            run(
+                PipelineStep::ChineseCopywriting(CopywritingOptions {
+                    indent: 0,
+                    space_cjk_latin: false,
+                    space_cjk_digit: false,
+                    ..CopywritingOptions::default()
+                }),
+                "10mbps"
+            ),
+            "10 mbps"
+        );
+    }
+
+    #[test]
+    fn math_symbols_get_spaces_but_hyphens_do_not() {
+        let step = PipelineStep::ChineseCopywriting(CopywritingOptions {
+            indent: 0,
+            space_cjk_latin: false,
+            space_cjk_digit: false,
+            digit_unit: false,
+            math_symbol: true,
+            half_bracket: false,
+            ..CopywritingOptions::default()
+        });
+        // 连字符一律不动：日期、负号、连字符三种身份挤在一个字符上
+        assert_eq!(
+            run(step, "E=mc²\nx+y\n2020-01-01\na++\nC++"),
+            "E = mc²\nx + y\n2020-01-01\na++\nC++"
+        );
+    }
+
+    #[test]
+    fn half_brackets_get_spaces_only_for_abbreviations() {
+        let step = PipelineStep::ChineseCopywriting(CopywritingOptions {
+            indent: 0,
+            space_cjk_latin: false,
+            space_cjk_digit: false,
+            digit_unit: false,
+            math_symbol: false,
+            half_bracket: true,
+            ..CopywritingOptions::default()
+        });
+        // 缩写（全大写）与中文语境加空格；小写的一律不动 —— foo(bar) 是函数调用
+        assert_eq!(
+            run(step, "Decision Tree(DT)\nfoo(bar)\n使用(MVP)模式"),
+            "Decision Tree (DT)\nfoo(bar)\n使用 (MVP) 模式"
         );
     }
 
@@ -2543,14 +2783,22 @@ mod tests {
 
     #[test]
     fn chinese_copywriting_normalizes_text() {
+        // 段首缩进另有一条用例专门测，这里显式关掉 —— 免得每行前面都顶着
+        // 两个全角空格，把正文的比较搅乱。
+        let flat = |text: &str| {
+            run(
+                PipelineStep::ChineseCopywriting(CopywritingOptions {
+                    indent: 0,
+                    ..CopywritingOptions::default()
+                }),
+                text,
+            )
+        };
         // 中英空格 + 标点后不留空格 + 重复标点合并 + 数字与单位
-        assert_eq!(
-            by_id("chinese_copywriting", "中文， abc！！重量100kg"),
-            "中文，abc！重量 100 kg"
-        );
-        assert_eq!(by_id("chinese_copywriting", "等等..."), "等等……");
+        assert_eq!(flat("中文， abc！！重量100kg"), "中文，abc！重量 100 kg");
+        assert_eq!(flat("等等..."), "等等……");
         // 不该把 kilogram 切成 kg ram
-        assert_eq!(by_id("chinese_copywriting", "100kilogram"), "100kilogram");
+        assert_eq!(flat("100kilogram"), "100kilogram");
     }
 
     #[test]

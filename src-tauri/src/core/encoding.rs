@@ -445,12 +445,30 @@ mod cp437 {
 }
 
 /// 行尾风格统计（以出现次数最多者为准）
+///
+/// 原先是三趟 `matches()`（CRLF / CR / LF 各扫一遍全文）；合成一趟 ——
+/// 大文件上这是「三次全量扫描」与「一次」的区别。
 fn detect_line_ending(text: &str) -> LineEnding {
-    let crlf = text.matches("\r\n").count();
-    let total_cr = text.matches('\r').count();
-    let total_lf = text.matches('\n').count();
-    let cr_only = total_cr - crlf;
-    let lf_only = total_lf - crlf;
+    let bytes = text.as_bytes();
+    let (mut crlf, mut cr_only, mut lf_only) = (0usize, 0usize, 0usize);
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
+                crlf += 1;
+                i += 2;
+            }
+            b'\r' => {
+                cr_only += 1;
+                i += 1;
+            }
+            b'\n' => {
+                lf_only += 1;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
 
     match (crlf, cr_only, lf_only) {
         (0, 0, 0) => LineEnding::Lf, // 无换行按 LF
@@ -464,12 +482,34 @@ fn detect_line_ending(text: &str) -> LineEnding {
     }
 }
 
-/// 行尾归一为 LF（编辑器内部统一表示）
-fn normalize_lf(text: &str) -> String {
-    if text.contains('\r') {
-        text.replace("\r\n", "\n").replace('\r', "\n")
-    } else {
-        text.to_owned()
+/// 行尾归一为 LF（编辑器内部统一表示），**原地**改
+///
+/// 原先是 `text.replace("\r\n", "\n").replace('\r', "\n")`：两次 replace 会产生
+/// 两份中间 String，各是一次全量拷贝；而绝大多数文件本来就是 LF，那两份拷贝
+/// 完全是白做的。现在没有 CR 时一个字节都不动。
+fn normalize_lf(text: &mut String) {
+    if !text.as_bytes().contains(&b'\r') {
+        return;
+    }
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' {
+            out.push(b'\n');
+            i += if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                2
+            } else {
+                1
+            };
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    // 输入是合法 UTF-8，而 `\r` / `\n` 都是 ASCII，不会切坏任何多字节序列
+    if let Ok(normalized) = String::from_utf8(out) {
+        *text = normalized;
     }
 }
 
@@ -495,16 +535,29 @@ fn bom_prefix(encoding: Encoding) -> &'static [u8] {
 
 /// 读取并解码文件（自动探测编码，F-02 §2.4 `fs_read`）
 pub fn read_file(path: &str) -> AppResult<LoadResult> {
-    let bytes = std::fs::read(path)?;
-    let (encoding, has_bom) = detect(&bytes);
-    let (body, had_bom) = if has_bom {
-        strip_bom(&bytes, encoding)
+    let mut bytes = std::fs::read(path)?;
+    let (encoding, had_bom) = detect(&bytes);
+    // UTF-8 是最常见的一档，而 `decode` 会**再分配一份** String；这里直接把
+    // 字节块转成 String —— 50 MB 的文件上，省掉的就是一次全量分配与拷贝。
+    // （`detect` 已做过严格校验，正常走不到 Err 那一支）
+    let mut text = if encoding == Encoding::Utf8 {
+        bytes.drain(
+            ..if had_bom {
+                bom_prefix(encoding).len()
+            } else {
+                0
+            },
+        );
+        match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(e) => decode(e.as_bytes(), encoding),
+        }
     } else {
-        (&bytes[..], false)
+        let (body, _) = strip_bom(&bytes, encoding);
+        decode(body, encoding)
     };
-    let raw = decode(body, encoding);
-    let line_ending = detect_line_ending(&raw);
-    let text = normalize_lf(&raw);
+    let line_ending = detect_line_ending(&text);
+    normalize_lf(&mut text);
 
     // 逐文件日志，降到 DEBUG：批处理上千文件时 INFO 会刷屏并拖慢（见
     // `lib.rs` 的日志初始化注释）。需要时 `RUST_LOG=debug` 打开。
@@ -525,11 +578,25 @@ pub fn read_file(path: &str) -> AppResult<LoadResult> {
 
 /// 按手选编码重新读取（「重新载入」，F-02 §2.2 手选编码）
 pub fn read_file_with(path: &str, encoding: Encoding) -> AppResult<LoadResult> {
-    let bytes = std::fs::read(path)?;
-    let (body, had_bom) = strip_bom(&bytes, encoding);
-    let raw = decode(body, encoding);
-    let line_ending = detect_line_ending(&raw);
-    let text = normalize_lf(&raw);
+    let mut bytes = std::fs::read(path)?;
+    let had_bom = strip_bom(&bytes, encoding).1;
+    let mut text = if encoding == Encoding::Utf8 {
+        bytes.drain(
+            ..if had_bom {
+                bom_prefix(encoding).len()
+            } else {
+                0
+            },
+        );
+        match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(e) => decode(e.as_bytes(), encoding),
+        }
+    } else {
+        decode(strip_bom(&bytes, encoding).0, encoding)
+    };
+    let line_ending = detect_line_ending(&text);
+    normalize_lf(&mut text);
 
     tracing::info!(
         path,
@@ -826,8 +893,13 @@ mod tests {
 
     #[test]
     fn normalize_lf_all_styles() {
-        assert_eq!(normalize_lf("a\r\nb\rc\nd"), "a\nb\nc\nd");
-        assert_eq!(normalize_lf("a\nb"), "a\nb");
+        let mut mixed = "a\r\nb\rc\nd".to_owned();
+        normalize_lf(&mut mixed);
+        assert_eq!(mixed, "a\nb\nc\nd");
+        // 本来就是 LF：一个字节都不该动（也不该重新分配）
+        let mut lf = "a\nb".to_owned();
+        normalize_lf(&mut lf);
+        assert_eq!(lf, "a\nb");
     }
 
     #[test]

@@ -129,7 +129,10 @@ const TOOL_FIELDS: Partial<Record<ToolId, Field[]>> = {
     { key: 'noSpaceAfterPunct', label: '全角标点之后不留空格', type: 'checkbox' },
     { key: 'dedupPunct', label: '重复标点合并（！！→！）', type: 'checkbox' },
     { key: 'ellipsisAndDash', label: '省略号与破折号规范化', type: 'checkbox' },
-    { key: 'digitUnit', label: '数字与英文单位之间补空格', type: 'checkbox' },
+    { key: 'digitUnit', label: '数字与英文单位之间补空格（度、% 除外）', type: 'checkbox' },
+    { key: 'mathSymbol', label: '数学符号两侧补空格（E=mc² → E = mc²）', type: 'checkbox' },
+    { key: 'halfBracket', label: '半角括号前后补空格（Tree(DT) → Tree (DT)）', type: 'checkbox' },
+    { key: 'indent', label: '段首缩进（全角空格个数，0 = 不动）', type: 'number', min: 0, max: 8 },
   ],
   tech_doc_layout: [
     { key: 'headingSpace', label: '标题与内容之间补空格（#标题 → # 标题）', type: 'checkbox' },

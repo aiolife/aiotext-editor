@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { buildDiffMarks, diffStats, paneRole, previewText } from './compareView';
+import {
+  buildDiffMarks,
+  diffStats,
+  mapToOpposite,
+  paneRole,
+  previewText,
+} from './compareView';
 import type { DiffBlock } from '../platform/tauriApi';
 
 const blk = (posA: number, lenA: number, posB: number, lenB: number): DiffBlock => ({
@@ -110,5 +116,40 @@ describe('previewText', () => {
     // U+20000 在 UTF-16 里占两个码元：切到第 3 个码元正好是「它 + 兔」
     const wide = String.fromCodePoint(0x20000);
     expect(previewText(`${wide}兔子`, 0, 3)).toBe(`${wide}兔`);
+  });
+});
+
+describe('mapToOpposite（逐字对照标蓝）', () => {
+  it('两文一致时位置一一对应', () => {
+    expect(mapToOpposite([], 0, 1, 'a')).toEqual({ from: 0, to: 1 });
+    expect(mapToOpposite([], 7, 9, 'b')).toEqual({ from: 7, to: 9 });
+  });
+
+  it('对侧多出一个字：后面的位置要跟着挪', () => {
+    const blocks = [blk(3, 0, 3, 1)]; // B 在偏移 3 处多了一个字
+    expect(mapToOpposite(blocks, 1, 2, 'a')).toEqual({ from: 1, to: 2 }); // 块之前：不动
+    expect(mapToOpposite(blocks, 5, 6, 'a')).toEqual({ from: 6, to: 7 }); // 块之后：+1
+    expect(mapToOpposite(blocks, 6, 7, 'b')).toEqual({ from: 5, to: 6 }); // 反方向：-1
+  });
+
+  it('落在差异块里就标整块', () => {
+    // A 的三个字换成了 B 的一个字：逐字对应无从谈起，标整块
+    const blocks = [blk(5, 3, 5, 1)];
+    expect(mapToOpposite(blocks, 6, 7, 'a')).toEqual({ from: 5, to: 6 });
+    expect(mapToOpposite(blocks, 5, 6, 'b')).toEqual({ from: 5, to: 8 });
+  });
+
+  it('换掉一个字时位置不动', () => {
+    const blocks = [blk(4, 1, 4, 1)];
+    expect(mapToOpposite(blocks, 0, 2, 'a')).toEqual({ from: 0, to: 2 });
+    expect(mapToOpposite(blocks, 9, 10, 'a')).toEqual({ from: 9, to: 10 });
+  });
+
+  it('好几处差异的长度差要累加', () => {
+    const blocks = [blk(2, 0, 2, 2), blk(7, 1, 9, 0)];
+    // A 的 10：前面两块净差 +2 -1 = +1
+    expect(mapToOpposite(blocks, 10, 11, 'a')).toEqual({ from: 11, to: 12 });
+    // B 的 12：反方向净差 -2 +1 = -1
+    expect(mapToOpposite(blocks, 12, 13, 'b')).toEqual({ from: 11, to: 12 });
   });
 });

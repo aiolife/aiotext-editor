@@ -98,6 +98,57 @@ export function diffStats(blocks: DiffBlock[], target: ComparePane): DiffStats {
   return { added, missing };
 }
 
+/** 一段位置（偏移为 UTF-16 码元） */
+export interface Span {
+  from: number;
+  to: number;
+}
+
+/**
+ * 把一侧的一段位置换算到**另一侧** —— 逐字对照标蓝用。
+ *
+ * 差异块把两文切成若干段：块与块之间**逐字相同**（偏移差固定），块内部则是
+ * 「A 的这几个字 ↔ B 的那几个字」。所以分两种情形：
+ *
+ * - **落在差异块里**：对侧标**整块**。A 三字对 B 一字时，逐字对应本就无从
+ *   谈起，标整块比乱指一个字诚实；
+ * - **其余位置**：偏移差是固定的，把前面所有块的长度差累加起来即可。
+ *
+ * 这份映射完全由 `blocks` 推算，不需要再问后端 —— 选中时零延迟。
+ */
+export function mapToOpposite(
+  blocks: DiffBlock[],
+  from: number,
+  to: number,
+  side: ComparePane,
+): Span {
+  for (const blk of blocks) {
+    const [selfFrom, selfTo, otherFrom, otherTo] =
+      side === 'a'
+        ? [blk.posA, blk.posA + blk.lenA, blk.posB, blk.posB + blk.lenB]
+        : [blk.posB, blk.posB + blk.lenB, blk.posA, blk.posA + blk.lenA];
+    // 两侧都空（0 对 0）的块没有位置可谈
+    if (selfTo <= selfFrom && otherTo <= otherFrom) continue;
+    // 有一点搭上就算落在这一块里
+    if (from < selfTo && to > selfFrom) {
+      return { from: otherFrom, to: otherTo };
+    }
+  }
+  return { from: shiftPos(blocks, from, side), to: shiftPos(blocks, to, side) };
+}
+
+/** 块与块之间的等值段：偏移差就是「前面所有块的长度差」之和 */
+function shiftPos(blocks: DiffBlock[], pos: number, side: ComparePane): number {
+  let delta = 0;
+  for (const blk of blocks) {
+    const selfEnd = side === 'a' ? blk.posA + blk.lenA : blk.posB + blk.lenB;
+    if (pos >= selfEnd) {
+      delta += side === 'a' ? blk.lenB - blk.lenA : blk.lenA - blk.lenB;
+    }
+  }
+  return pos + delta;
+}
+
 /** 工具条要显示原文片段；太长就掐断加省略号 */
 export function previewText(text: string, start: number, end: number, max = 12): string {
   const chars = Array.from(text.slice(start, end));

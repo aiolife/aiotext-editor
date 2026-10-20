@@ -100,6 +100,13 @@ interface EditorProps {
   readOnly?: boolean;
   /** 比较差异标红（F-06 §6.2） */
   diffMarks?: DiffMark[];
+  /**
+   * 逐字对照标蓝（F-06）：要标蓝的那一处。
+   *
+   * 两侧都传同一个语义 —— 哪格是「用户选中的」、哪格是「对过去的对应位置」，
+   * 由调用方按选中发生在哪一侧决定（见 `App` 里的 `pairMarks`）。
+   */
+  pairMark?: PairSpan | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,6 +180,45 @@ const diffMarkField = StateField.define<DecorationSet>({
       // Decoration.set 的第二参数要求已按位置排序
       ranges.sort((a, b) => a.from - b.from || a.to - b.to);
       next = Decoration.set(ranges, true);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+// ---------------------------------------------------------------------------
+// 逐字对照标蓝（F-06）
+//
+// 与标红分开：红是「两文不一致」，蓝是「正在对照的这一处」（它多半是一致的），
+// 含义与配色都不该混在一起。同一时刻只标一处（最后选中的那处），所以这里
+// 收的是一个区间而不是区间数组。
+// ---------------------------------------------------------------------------
+
+export interface PairSpan {
+  from: number;
+  to: number;
+}
+
+const setPairMark = StateEffect.define<PairSpan | null>();
+
+const pairMarkField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(decorations, transaction) {
+    let next = decorations.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setPairMark)) continue;
+      const span = effect.value;
+      if (!span) {
+        next = Decoration.none;
+        continue;
+      }
+      const docLength = transaction.state.doc.length;
+      const from = Math.max(0, Math.min(span.from, docLength));
+      const to = Math.max(from, Math.min(span.to, docLength));
+      next =
+        to <= from
+          ? Decoration.none
+          : Decoration.set([Decoration.mark({ class: 'cm-pair-mark' }).range(from, to)], true);
     }
     return next;
   },
@@ -343,6 +389,7 @@ export function Editor({
   commandRequest,
   readOnly,
   diffMarks,
+  pairMark,
 }: EditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -477,6 +524,13 @@ export function Editor({
     view.dispatch({ effects: setDiffMarks.of(diffMarks ?? []) });
   }, [diffMarks]);
 
+  // 逐字对照标蓝
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setPairMark.of(pairMark ?? null) });
+  }, [pairMark]);
+
   // 目标窗切换：只读状态原地翻转（用 layout 时机，避免切换时闪一帧）
   useLayoutEffect(() => {
     const view = viewRef.current;
@@ -555,6 +609,7 @@ export function Editor({
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         highlightField,
         diffMarkField,
+        pairMarkField,
         readOnlyCompartment.of(readOnlyExt(readOnlyRef.current)),
         EditorView.updateListener.of((update) => {
           // 始终以「当前标签」为准（组件实例跨标签复用）

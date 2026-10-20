@@ -468,8 +468,17 @@ describe('F-09 整理工具接口', () => {
       cjkDigit: true,
       squeezeSpaces: true,
       trimEnd: true,
-      indent: 2,
+      // 网文排版默认**不动**缩进：稿件多半已经带着缩进，再补一遍就是双份
+      indent: 0,
       skipCode: true,
+    });
+    // 中文文案正相反：默认空两格，三条空格规则默认都开
+    expect(TOOL_OPTION_DEFAULTS.chinese_copywriting).toMatchObject({
+      spaceCjkLatin: true,
+      digitUnit: true,
+      mathSymbol: true,
+      halfBracket: true,
+      indent: 2,
     });
     expect(TOOL_OPTION_DEFAULTS.snippet_process).toMatchObject({
       trimHead: true,
