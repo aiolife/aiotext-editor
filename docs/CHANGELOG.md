@@ -1461,3 +1461,33 @@ Linux `AioTextEditor_0.10.0_amd64.deb`。
 
 **没做的**：手册里台湾与大陆另有几处符号习惯不同（间隔号 `·` vs `．`、
 书名号、连接号），按你的要求这次一概不动。
+---
+
+## 开发日志 017 — 2026-10-20（CI 在 macOS 上挂：OpenCC 数据目录的并发初始化）
+
+**现象**：`Rust (fmt + check + test)` 的 macos-latest 一栏红，8 条 annotation 全部指向
+`src-tauri/tests/convert_contract.rs:98`（`convert_with_inline_dicts(...).unwrap()`）。
+Windows / Linux 两栏是绿的，本地 Windows 连跑 5 次也全过。
+
+**根因**：`data_dir()` 首次初始化有竞态。`convert_contract` 里 5 个测试是并行跑的，
+其中好几个都会触发 OpenCC 首次写盘，而当时的写法是：
+
+    if target.exists() { continue; }          // 别的线程正在写时文件已经存在
+    std::fs::write(&target, data.content)     // 不是原子写
+
+线程 A 正在写 `TSPhrases.ocd2` 时，线程 B 一看文件存在就跳过 —— 手里是**半截字典**，
+`opencc_open` 随即失败。macOS runner 的调度与文件系统让这个窗口更容易命中。
+
+**修法**（两道保险）：
+1. 初始化加锁：`static INIT: Mutex<()>`，拿到锁后二次检查 `DATA_DIR`；
+2. 所有写盘改成**原子写**：先写同目录临时文件再 `rename`（同一文件系统内原子），
+   这样「文件存在」就等价于「内容完整」。
+
+这个洞不只影响测试：应用里若有两个操作同时触发首次转换，同样会踩到。
+
+**回归**：新增 `tests/opencc_init.rs` —— 独占一个测试二进制（保证是该进程第一次
+`data_dir()`），8 个线程同时首启，逐个校验文件大小与内嵌内容一致、转换结果正确、
+所有线程拿到同一个目录。
+
+**验证**：Rust 219 项 + 各集成测试全绿（含新增的并发用例）；`cargo fmt` 与
+`clippy -D warnings` 干净。

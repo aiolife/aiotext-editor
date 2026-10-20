@@ -126,7 +126,7 @@ impl Direction {
 /// tw2t / hk2sp）不再写出——它们的 id 已无法反序列化，写出来只是给临时目录添
 /// 无用文件。词典仍全量写出：剩下 6 个配置会引用其中大部分（含地区变体词典），
 /// 逐个挑「谁用谁」不划算也容易漏。
-fn all_data() -> Vec<&'static opencc_sys::Data> {
+pub fn all_data() -> Vec<&'static opencc_sys::Data> {
     vec![
         // 配置 JSON（PRD v0.5 §3.5：只剩 6 种方向）
         &opencc_sys::HK2S_JSON,
@@ -164,7 +164,18 @@ fn all_data() -> Vec<&'static opencc_sys::Data> {
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// 数据目录（懒初始化：首次调用时写盘，进程内复用）
+///
+/// 首次初始化必须串行。测试是并行跑的，多个线程会同时进来各自铺一遍数据，
+/// 而「文件已存在就跳过」这个判断可能撞上另一个线程**正在写**的那个文件 ——
+/// 跳过之后手里就是半截字典，`opencc_open` 随即失败（macOS 的 runner 上
+/// 稳定复现过，Windows 上恰好躲过去了）。锁 + 原子写两道保险。
 pub fn data_dir() -> AppResult<&'static Path> {
+    if let Some(dir) = DATA_DIR.get() {
+        return Ok(dir.as_path());
+    }
+    static INIT: Mutex<()> = Mutex::new(());
+    let _guard = INIT.lock().unwrap_or_else(|e| e.into_inner());
+    // 拿到锁时别人可能已经铺好了
     if let Some(dir) = DATA_DIR.get() {
         return Ok(dir.as_path());
     }
@@ -176,12 +187,31 @@ pub fn data_dir() -> AppResult<&'static Path> {
         if target.exists() {
             continue; // 同 pid 复用目录（重复初始化）
         }
-        std::fs::write(&target, data.content)
-            .map_err(|e| AppError::OpenccInit(format!("写出 {} 失败：{e}", data.file_name)))?;
+        write_atomic(&target, data.content)?;
     }
     tracing::info!(dir = %dir.display(), files = all_data().len(), "OpenCC 数据已展开");
     let _ = DATA_DIR.set(dir);
     Ok(DATA_DIR.get().expect("刚刚写入").as_path())
+}
+
+/// 原子写：先写同目录的临时文件，再 rename 覆盖
+///
+/// 同一进程里多个线程会并发铺数据、并发写叠加配置。`fs::write` 不是原子的：
+/// 别的线程只要看到目标文件存在就可能开始读 —— 读到半截 JSON 或半截字典，
+/// `opencc_open` 就失败了。rename 在同一文件系统内是原子的，读到的一定完整。
+fn write_atomic(path: &Path, content: &[u8]) -> AppResult<()> {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("data");
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}-{:?}.tmp",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::write(&tmp, content)
+        .map_err(|e| AppError::OpenccInit(format!("写出 {name} 失败：{e}")))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        AppError::OpenccInit(format!("落盘 {name} 失败：{e}"))
+    })
 }
 
 /// 清理临时数据目录（应用退出时调用）
@@ -413,11 +443,13 @@ fn write_config(
 
     let dir = data_dir()?;
     let path = dir.join(format!("{prefix}-{digest:016x}.json"));
-    std::fs::write(
-        &path,
-        serde_json::to_vec_pretty(root).expect("内置结构可序列化"),
-    )
-    .map_err(|e| AppError::OpenccInit(format!("写出叠加配置失败：{e}")))?;
+    // 内容哈希相同 → 文件内容必然相同：已存在就直接复用。既省一次写，
+    // 也避免多个线程先后 rename 同一个目标。
+    if path.exists() {
+        return Ok(path);
+    }
+    let bytes = serde_json::to_vec_pretty(root).expect("内置结构可序列化");
+    write_atomic(&path, &bytes)?;
     Ok(path)
 }
 
