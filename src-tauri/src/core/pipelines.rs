@@ -2084,11 +2084,21 @@ fn pair_quotes(line: &str, style: QuoteStyle) -> (String, usize) {
         QuoteStyle::Corner => ('「', '」', '『', '』'),
         QuoteStyle::Keep => return (line.to_owned(), 0),
     };
-    // 全角引号 → 目标样式。只有港澳台这一档要动
+    // 已有的全角引号 → 目标样式。**两档都要转**，方向相反：
+    // - 港澳台：把大陆的 “”‘’ 换成 「」『』
+    // - 大陆：反过来，把台湾的 「」『』 换成 “”‘’
+    // 只认半角 " ' 的话，另一体系的文本选它就一个字都不动，
+    // 用户看到的就是「这个选项没用」—— 两档各自都踩过一次。
+    //
+    // 按**字符**直接映射（不做层次重排）：手册的规范写法是「外层『内层』」，
+    // 一一对应过来正好是 “外层‘内层’”；若原文把 『』 用在了外层（非规范写法），
+    // 得到的结果是层次反的（外层成单引号），字符本身仍是转了的。
+    const TO_MAINLAND: [(char, char); 4] = [('「', '“'), ('」', '”'), ('『', '‘'), ('』', '’')];
     const TO_CORNER: [(char, char); 4] = [('“', '「'), ('”', '」'), ('‘', '『'), ('’', '』')];
     let full: Option<&[(char, char)]> = match style {
+        QuoteStyle::Mainland => Some(&TO_MAINLAND),
         QuoteStyle::Corner => Some(&TO_CORNER),
-        _ => None,
+        QuoteStyle::Keep => None,
     };
     let mut out = String::with_capacity(line.len());
     let mut changed = 0usize;
@@ -2696,13 +2706,24 @@ mod tests {
     }
 
     #[test]
-    fn mainland_quotes_stay_as_they_are() {
-        // 大陆这一档保持现状：只把半角直引号配成对，不碰任何已有的全角引号
+    fn mainland_quotes_convert_corner_ones() {
+        // 台湾文本选「大陆」：把角引号换成大陆的弯引号。
+        // 手册：台湾的单引号「」作外层、双引号『』作内层；大陆反过来 ——
+        // 双引号 “” 外层、单引号 ‘’ 内层 —— 正好一一对应。
         let mainland = PipelineStep::NormalizePunctuation(PunctOptions::default());
+        assert_eq!(run(mainland.clone(), "他说「你好」"), "他说“你好”");
+        assert_eq!(run(mainland.clone(), "他说『你好』"), "他说‘你好’");
+        // 嵌套：台湾外层 「」→ 大陆外层 “”，台湾内层 『』→ 大陆内层 ‘’
+        assert_eq!(
+            run(mainland.clone(), "他说「她说『你好』」"),
+            "他说“她说‘你好’”"
+        );
+        // 半角直引号照旧（这一档原本就转）
         assert_eq!(run(mainland.clone(), "他说\"你好\""), "他说“你好”");
+        // 已是大陆引号的不动 —— 也是幂等的保证
         assert_eq!(run(mainland.clone(), "他说“你好”"), "他说“你好”");
-        assert_eq!(run(mainland.clone(), "他说「你好」"), "他说「你好」");
-        assert_eq!(run(mainland.clone(), "他说『你好』"), "他说『你好』");
+        let once = run(mainland.clone(), "他说「她说『你好』」");
+        assert_eq!(run(mainland, &once), once);
     }
 
     #[test]

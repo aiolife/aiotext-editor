@@ -456,6 +456,24 @@ try {
         `,
       },
       {
+        // 反向的同一个洞：台湾文本（「」『』）选「大陆」，此前也一个字不动。
+        // 「大陆」还是这一档的**默认**值，所以台湾文件点进来就是「没反应」。
+        name: '规范标点 → 大陆引号（「」 → “”，嵌套 『』 → ‘’）',
+        item: '规范标点',
+        sample: '他说「你好」\n他说「她说『你好』」',
+        expect: '他说“你好”\n他说“她说‘你好’”',
+        beforeApply: `
+          (async () => {
+            const sel = document.querySelector('.tool-input-select');
+            if (!sel) return 'no-select';
+            sel.value = 'mainland';
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            await window.__layout.frame();
+            return sel.value;
+          })()
+        `,
+      },
+      {
         // 段首缩进默认是 0（网文稿件多半已带着缩进，补一遍就成双份）
         name: '网文排版（中英 / 中数补空格，URL 不动；段首缩进默认 0）',
         item: '网文排版',
