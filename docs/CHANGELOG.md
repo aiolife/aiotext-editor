@@ -1592,3 +1592,32 @@ Windows 只出了 nsis，便携版没有生成。
 **本地排查时踩到的**：便携 exe 被直接运行过（进程名
 `AioTextEditor_0.10.0_x64_portable`），把 bundle 里的目标文件锁住，导致
 `copyFileSync` 报 EBUSY —— 这也正好印证了重试的必要性。
+---
+
+## 开发日志 021 — 2026-10-21（Release 里没有 Windows 包）
+
+**现象**：Actions 全绿，三个 artifact 都在（`windows-x64` 有 7.99 MB），但 Release
+v0.10.0 的 Assets 里只有 `AioTextEditor_0.10.0_amd64.deb` 与
+`AioTextEditor_0.10.0_universal.dmg`，**没有任何 Windows 包**。
+
+**先排除「每平台只能出一个包」的限制**：查过 PRD / `03-tech-architecture` /
+`tests/packaging.test.ts`，都没有这类约定 —— `packaging.test.ts` 约束的是
+`bundle.targets` 每平台恰好**一种打包格式**（nsis / dmg / deb），不是产物文件数量；
+PRD 只管体积（Windows < 16 MB、macOS < 12 MB、Linux deb < 18 MB）。
+所以「Windows 出两个包」不违反任何既有约定。
+
+**根因**在 release job 取文件的方式：`files: dist-artifacts/*` 只匹配**顶层**。
+而 `upload-artifact` 对多行 path 取**公共祖先**作根 —— Windows 那条同时收了
+`bundle/nsis/` 与 `bundle/portable/`，根是 `bundle/`，于是下载后两个 exe 落在
+`dist-artifacts/nsis/` 与 `dist-artifacts/portable/` **子目录**里，被 `*` 漏掉。
+Linux（`deb/*.deb`）与 macOS（`dmg/*.dmg`）是单行 path，根就是那个目录，下载后
+是扁平的，所以它们一直正常。
+
+artifact 的 7.99 MB 也印证了两个 exe 都在里面（单个 nsis 只有 4.47 MiB）——
+**便携版本就已经生成了**，只是没挂到 Release 上。
+
+**修法**：`files` 改成按扩展名**递归**匹配
+（`dist-artifacts/**/*.exe` / `*.deb` / `*.dmg`）；「列出产物」改成 `ls -lhR`，
+下次一眼就能看出子目录结构。
+
+**结果**：Windows 出两个包（安装包 + 便携包），Linux / macOS 仍各一个，保持不变。

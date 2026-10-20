@@ -164,11 +164,18 @@ jobs:
           merge-multiple: true
 
       - name: 列出产物
-        run: ls -lh dist-artifacts
+        run: ls -lhR dist-artifacts
 
       - uses: softprops/action-gh-release@v3
         with:
-          files: dist-artifacts/*
+          # 必须**递归**匹配：`upload-artifact` 以 path 的公共祖先为根，Windows 那条
+          # 同时收了 nsis/ 与 portable/，所以下载后的两个 exe 落在子目录里；
+          # 只写 `dist-artifacts/*` 的话，Windows 的包会被整个漏掉（Release 里
+          # 只剩 deb 与 dmg，正是 v0.10.0 那次的样子）。
+          files: |
+            dist-artifacts/**/*.exe
+            dist-artifacts/**/*.deb
+            dist-artifacts/**/*.dmg
           draft: true
           generate_release_notes: true
 
