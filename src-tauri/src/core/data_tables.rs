@@ -55,8 +55,12 @@ impl VariantTables {
     }
 }
 
-/// 资源目录探测：打包资源 → 开发态 manifest → 可执行文件同级
+/// 资源目录探测：打包资源 → 开发态 manifest → 可执行文件同级 → **内嵌展开**
+///
+/// 最后一项是便携版专用：单 exe 旁边没有 `data/`，这时从编进二进制的字节里
+/// 展开一份（`embedded` 模块）。安装版磁盘上就有，走不到这一步。
 fn legacy_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    use crate::core::embedded;
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(dir) = resource_dir {
         candidates.push(dir.join(LEGACY_RESOURCE_SUBDIR));
@@ -67,6 +71,13 @@ fn legacy_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
             candidates.push(parent.join(LEGACY_RESOURCE_SUBDIR));
         }
     }
+    candidates.extend(embedded::expand(
+        "legacy",
+        &[
+            (FULL_VARIANT_FILE, embedded::LEGACY_FC1),
+            (PARTIAL_VARIANT_FILE, embedded::LEGACY_FC2),
+        ],
+    ));
     candidates.into_iter().find(|p| p.is_dir())
 }
 

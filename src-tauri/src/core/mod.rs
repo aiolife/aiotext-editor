@@ -4,6 +4,7 @@ pub mod batch;
 pub mod compare;
 pub mod convert;
 pub mod data_tables;
+pub mod embedded;
 pub mod encoding;
 pub mod merge;
 pub mod opencc;

@@ -1519,3 +1519,39 @@ Windows / Linux 两栏是绿的，本地 Windows 连跑 5 次也全过。
 「不动 `「」`」，随本次语义变更改写为 `mainland_quotes_convert_corner_ones`）。
 冒烟新增一条走真 UI 路径的**反向**用例 —— 在选项对话框里把引号体系选成
 「大陆」，确认 `「」` 真的变成 `“”`。本机冒烟 38 通过 / 0 失败。
+---
+
+## 开发日志 019 — 2026-10-20（Windows 便携版：单个 exe、免安装）
+
+**需求**：增加一个便携安装包 —— 整个软件只有一个单独的 exe，直接运行，不写入注册表。
+
+**调查**：
+- Tauri **没有** portable 这个 bundle target（Windows 只有 nsis / msi / wix）。
+- `target/release/<name>.exe` 本身就是便携的：前端资源已编进二进制，双击直接运行、
+  不安装、**不写注册表**（应用本身不碰注册表）—— 业界用法见 EHDL-IDE 的构建文档：
+  「`ehdl-ide.exe` — the portable binary」。
+- 唯一的坎：运行时要读 `data/legacy`（异体字组表，比较用）与 `data/builtin-tables`
+  （内置替换表）。单 exe 旁边没有这两个目录 → 比较会报「未找到异体字组表目录」，
+  内置替换表则是空的。
+
+**做法**：
+1. 新建 `core/embedded.rs`：用 `include_bytes!` 把这 5 个文件（合计 0.13 MB）编进
+   二进制；磁盘上找不到资源目录时展开到临时目录再读（进程内一次，原子写）。
+2. `data_tables::legacy_dir` 与 `replace::builtin_resource_dir` 的候选链**末尾**加上
+   这条兜底 —— 磁盘上有就永远走不到，安装版行为完全不变。
+3. `scripts/make-portable.mjs` 把主 exe 复制成 `AioTextEditor_<版本>_x64_portable.exe`；
+   接到 `tauri:build` 之后，本地与 CI 一致。
+4. Release workflow 的 windows job 两个都上传（nsis 安装包 + 便携 exe）。
+
+**验证**：
+- Rust 221 项（新增 2 条：展开写全、`embedded_matches_files_on_disk` —— 守的是
+  「数据改了却忘了重编」，那会让便携版与安装版行为不同，而本地磁盘上总有 data/，
+  这种差异几乎发现不了）。
+- 冒烟新增 3 条：便携 exe 放在**空目录**（没有 data/）里跑 —— 目录里只有单个 exe、
+  能启动渲染、比较功能可用（内嵌的 data/legacy 生效）。比较那条特意用 `fullEq`：
+  「兔/兎」在 fc1 里属完全等同，表加载成功才会判为无差异（差异块 0），
+  表没加载则直接报错 —— 正好是可判别的。
+- 本机冒烟 41 通过 / 0 失败，连跑两次稳定。便携 exe 7.69 MiB。
+
+**踩到的坑**：冒烟里 kill 掉便携进程后立刻删临时目录会 EPERM（exe 还被占用）——
+`kill` 是异步的，要等它真正退出；两处清理都加了容错。

@@ -25,7 +25,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -1085,6 +1085,117 @@ try {
       child.kill();
     } catch {
       // 已经退出了
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 便携版：单个 exe 放在**空目录**里跑（旁边没有 data/）
+//
+// 这是「免安装、不写注册表」的实证，也顺带验证 core/embedded.rs 的内嵌兜底 ——
+// 比较功能要读 data/legacy（异体字组表），磁盘上没有时必须从二进制里展开，
+// 否则后端直接报「未找到异体字组表目录」。
+// ---------------------------------------------------------------------------
+if (process.platform === 'win32') {
+  const portableDir = path.join(ROOT, 'target', 'release', 'bundle', 'portable');
+  const exe2 = existsSync(portableDir)
+    ? readdirSync(portableDir)
+        .filter((f) => f.endsWith('.exe'))
+        .map((f) => path.join(portableDir, f))[0]
+    : null;
+
+  if (!exe2) {
+    check('便携版：产出存在', false, 'target/release/bundle/portable 下没有 exe');
+  } else {
+    const dir2 = path.join(os.tmpdir(), 'aiotext-portable-smoke');
+    // 上一轮残留下来的目录可能还被占用（进程没退干净），删不掉就复用
+    try {
+      rmSync(dir2, { recursive: true, force: true });
+    } catch {
+      // 删不掉没关系，下面直接覆盖
+    }
+    mkdirSync(dir2, { recursive: true });
+    const app2 = path.join(dir2, 'AioTextEditor-portable.exe');
+    copyFileSync(exe2, app2);
+
+    check(
+      '便携版：目录里只有单个 exe（没有 data/）',
+      readdirSync(dir2).length === 1,
+      readdirSync(dir2).join(', '),
+    );
+
+    // 主实例刚被 kill，等它把单实例锁放掉
+    await sleep(1500);
+    const port2 = 9335;
+    const child2 = spawn(app2, [], {
+      cwd: dir2,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port2}`,
+      },
+    });
+
+    try {
+      const page2 = await waitForPage(port2, args.timeout);
+      const cdp2 = await connectCdp(page2.webSocketDebuggerUrl);
+      await cdp2.send('Runtime.enable');
+
+      let ready = false;
+      for (let i = 0; i < 80 && !ready; i += 1) {
+        const probe = await cdp2.send('Runtime.evaluate', {
+          expression: `!!document.querySelector('.cm-content')`,
+          returnByValue: true,
+        });
+        ready = probe.result?.value === true;
+        if (!ready) await sleep(300);
+      }
+      check('便携版：单个 exe 能启动并渲染界面', ready);
+
+      // 比较要读 data/legacy —— 磁盘上没有，必须走内嵌兜底，否则这里会报错
+      const diff = await cdp2.send('Runtime.evaluate', {
+        expression: `(async () => {
+          try {
+            const r = await window.__TAURI_INTERNALS__.invoke('compare_diff', {
+              a: '兔子与兎子',
+              b: '兔子与兔子',
+              opts: {
+                ignoreNewlines: false,
+                ignoreHalfSpace: false,
+                ignoreFullPunct: false,
+                ignoreHalfPunct: false,
+                variantStrictness: 'fullEq',
+              },
+            });
+            return { ok: true, blocks: Array.isArray(r?.blocks) ? r.blocks.length : -1 };
+          } catch (e) {
+            return { ok: false, error: String(e) };
+          }
+        })()`,
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      const v = diff.result?.value;
+      check(
+        '便携版：比较功能可用（内嵌的 data/legacy 生效）',
+        v?.ok === true,
+        v?.ok ? `差异块 ${v.blocks}` : String(v?.error),
+      );
+      cdp2.ws.close();
+    } catch (err) {
+      check('便携版：启动并验证', false, err.message);
+    }
+    // 收尾：`kill` 是异步的，exe 还被占用时删目录会 EPERM —— 等它真退了再删
+    try {
+      child2.kill();
+    } catch {
+      // 已经退出了
+    }
+    await sleep(800);
+    try {
+      rmSync(dir2, { recursive: true, force: true });
+    } catch {
+      // 删不掉只是留个临时目录，不影响结论
     }
   }
 }

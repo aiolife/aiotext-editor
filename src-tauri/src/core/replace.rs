@@ -997,8 +997,12 @@ pub fn load_entries_by_names(names: &[String]) -> AppResult<Vec<(String, String)
     Ok(out)
 }
 
-/// 内置表资源目录探测（打包资源 → 开发态 manifest → 可执行文件同级）
+/// 内置表资源目录探测（打包资源 → 开发态 manifest → 可执行文件同级 → **内嵌展开**）
+///
+/// 最后一项是便携版专用：单 exe 旁边没有 `data/`，这时从编进二进制的字节里
+/// 展开一份（`embedded` 模块）。安装版磁盘上就有，走不到这一步。
 fn builtin_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
+    use crate::core::embedded;
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(dir) = resource_dir {
         candidates.push(dir.join(BUILTIN_RESOURCE_SUBDIR));
@@ -1009,6 +1013,14 @@ fn builtin_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
             candidates.push(parent.join(BUILTIN_RESOURCE_SUBDIR));
         }
     }
+    candidates.extend(embedded::expand(
+        "builtin-tables",
+        &[
+            ("ancient-usage.tab", embedded::BUILTIN_ANCIENT),
+            ("cn-punct.tab", embedded::BUILTIN_CN_PUNCT),
+            ("simplified-variants.tab", embedded::BUILTIN_SIMPLIFIED),
+        ],
+    ));
     candidates.into_iter().find(|p| p.is_dir())
 }
 
