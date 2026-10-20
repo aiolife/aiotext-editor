@@ -114,18 +114,33 @@ jobs:
 
       # 同 ci.yml：日志正文看不到（要登录 / 要 token），失败时把关键行写成
       # annotation —— 那是公开可读的，不用开网页也能知道 Linux / macOS 为什么没出包。
+      #
+      # 这里**直接调 tauri CLI**，不走 `npm run tauri:build`：`npm run xxx -- args`
+      # 会把 args 追加到整条 script 末尾，一旦 script 里串了 `&&`，args 就落到
+      # 后半截（便携脚本）上了 —— macOS 的 `--target universal-apple-darwin`
+      # 会因此被 tauri 漏掉，只编出单架构，dmg 也不在 universal 目录下。
       - name: 出包
         id: build_pkg
         shell: bash
         run: |
           set -o pipefail
-          npm run tauri:build -- ${{ matrix.args }} 2>&1 | tee build.log
+          npx tauri build ${{ matrix.args }} 2>&1 | tee build.log
 
+      # 便携版（单个 exe，免安装）：只有 Windows 有，且必须在 tauri build 之
+      # **后**单独跑 —— 不能串成 `&&`（见上）。
+      - name: 生成 Windows 便携版
+        if: matrix.name == 'windows-x64'
+        shell: bash
+        run: node scripts/make-portable.mjs
+
+      # 条件是 `failure()` 而不是只看 build_pkg：便携脚本是独立的一步，
+      # 它失败时 build_pkg 是成功的，按旧条件就一条 annotation 都出不来。
       - name: 诊断：出包失败原因
-        if: failure() && steps.build_pkg.outcome == 'failure'
+        if: failure()
         shell: bash
         run: |
-          grep -aE '^error|panicked|Error:|failed|not found|Cannot|Timeout' build.log | tail -8 | while read -r l; do echo "::error::$l"; done
+          [ -f build.log ] || { echo "::error::没等到 build.log，出包步骤可能没跑起来"; exit 0; }
+          grep -aE '^error|panicked|Error:|failed|not found|Cannot|Timeout|EBUSY|EPERM' build.log | tail -8 | while read -r l; do echo "::error::$l"; done
 
       # GitHub Runner 上没有交互式桌面会话，WebView2 建不了窗 —— 冒烟在这里
       # **永远失败**，之前因此白印了一堆红字（还一度把 artifact 上传挡成 skipped）。

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "lint": "eslint .",
     "tauri": "tauri",
-    "tauri:build": "tauri build && node scripts/make-portable.mjs",
+    "tauri:build": "tauri build",
+  "tauri:portable": "node scripts/make-portable.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

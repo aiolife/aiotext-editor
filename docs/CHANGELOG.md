@@ -1555,3 +1555,40 @@ Windows / Linux 两栏是绿的，本地 Windows 连跑 5 次也全过。
 
 **踩到的坑**：冒烟里 kill 掉便携进程后立刻删临时目录会 EPERM（exe 还被占用）——
 `kill` 是异步的，要等它真正退出；两处清理都加了容错。
+---
+
+## 开发日志 020 — 2026-10-21（出包全红：args 被吃掉 + 便携脚本跨平台）
+
+**现象**：tag 推上去后 Actions 三个平台全红（linux / macos 各两条 error），
+Windows 只出了 nsis，便携版没有生成。
+
+**根因**（两个，同一行引起）：出包步骤是
+`npm run tauri:build -- ${{ matrix.args }}`，而 `tauri:build` 上一轮被改成了
+`tauri build && node scripts/make-portable.mjs`。`npm run xxx -- args` 会把参数
+追加到**整条 script 的末尾** —— 于是 args 全落到了 `&&` 后面的便携脚本上：
+
+- **linux-x64**（args 空）：`node make-portable.mjs` 在 Linux 上找不到
+  `aiotext-editor.exe`（Linux 产物无扩展名）→ `process.exit(1)` → job 失败；
+- **macos-universal**（args = `--target universal-apple-darwin`）：`tauri build`
+  **根本没收到** `--target` → 只编了 runner 原生架构，dmg 落在
+  `target/release/bundle/dmg/`，而 artifact 找的是
+  `target/universal-apple-darwin/release/bundle/dmg/` → `if-no-files-found: error`；
+- **windows-x64**：args 为空，但便携脚本同样被这串命令牵连 —— 且新编译出来的
+  exe 可能被杀毒/索引短时占用，`copyFileSync` 抛 EBUSY 就整个 job 红。
+
+**修法**：
+1. 出包步骤**直接调 CLI**：`npx tauri build ${{ matrix.args }}`，args 一定送得到；
+2. 便携版**单独一步**，`if: matrix.name == 'windows-x64'` —— 不再串 `&&`；
+3. `tauri:build` 恢复为纯 `tauri build`，另加 `tauri:portable`；
+4. `make-portable.mjs` 两道加固：非 Windows 直接跳过（exit 0）；复制遇到
+   EBUSY / EPERM / EACCES 重试 6 次（Windows 上刚构建的 exe 常被 Defender 短暂锁定）；
+5. 诊断步骤的 `if` 从「只看 build_pkg 成败」改成 `failure()` —— 便携脚本失败也能
+   出 annotation（并补了 EBUSY / EPERM 关键字）。
+
+**验证**：本地按 CI 的新命令完整走了一遍 —— `npx tauri build` 退出码 0，
+`node scripts/make-portable.mjs` 产出 `AioTextEditor_0.10.0_x64_portable.exe`
+（7.69 MiB）、nsis `AioTextEditor_0.10.0_x64-setup.exe`（4.47 MiB）。冒烟 41 通过 / 0 失败。
+
+**本地排查时踩到的**：便携 exe 被直接运行过（进程名
+`AioTextEditor_0.10.0_x64_portable`），把 bundle 里的目标文件锁住，导致
+`copyFileSync` 报 EBUSY —— 这也正好印证了重试的必要性。
