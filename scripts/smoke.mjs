@@ -437,6 +437,25 @@ try {
         expect: '他说“你好”，真的吗？\n等等……\n他——走了\n甲，乙',
       },
       {
+        // 这一条守的是真·UI 路径：在选项对话框里把引号体系选成「港澳台」。
+        // 全角 “” 此前完全转不动（pair_quotes 只认半角 " '），
+        // 用户看到的就是「这个选项没用」。
+        name: '规范标点 → 港澳台引号（““” → 「」，嵌套 ‘’ → 『』）',
+        item: '规范标点',
+        sample: '他说“你好”\n他说“她说‘你好’”',
+        expect: '他说「你好」\n他说「她说『你好』」',
+        beforeApply: `
+          (async () => {
+            const sel = document.querySelector('.tool-input-select');
+            if (!sel) return 'no-select';
+            sel.value = 'corner';
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            await window.__layout.frame();
+            return sel.value;
+          })()
+        `,
+      },
+      {
         // 段首缩进默认是 0（网文稿件多半已带着缩进，补一遍就成双份）
         name: '网文排版（中英 / 中数补空格，URL 不动；段首缩进默认 0）',
         item: '网文排版',
@@ -478,6 +497,15 @@ try {
       await sleep(300);
       await runJs(`window.__layout.pick('排版', '${c.item}')`);
       await sleep(600); // 预览是防抖 250ms 之后才算
+      // 要在对话框里改选项的用例（如把引号体系选成港澳台）——改完会重新预览
+      if (c.beforeApply) {
+        const picked = await runJs(c.beforeApply);
+        if (picked === 'no-select') {
+          check(`排版端到端：${c.name}`, false, '对话框里没找到选项下拉框');
+          continue;
+        }
+        await sleep(600);
+      }
       const previewNote = await runJs(`window.__layout.note()`);
       await runJs(`window.__layout.applyIfDialog()`);
       await sleep(350);

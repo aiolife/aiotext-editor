@@ -2066,17 +2066,40 @@ fn half_punct_to_full(line: &str) -> (String, usize) {
 }
 
 /// 直引号按前后文配成对（沿用「半角引号转全角」的配对思路，只是引号样式可选）
+///
+/// 港澳台那一档还要把**已有的全角引号**一起换过来 —— 中文稿件里输入法打出来的、
+/// 从 Word 粘过来的几乎都是 `“”`，只认半角的话选「港澳台」会一个字都不动，
+/// 用户看到的就只是「这个选项没用」。
+///
+/// 依据台湾教育部《重訂標點符號手冊》修訂版：
+///   「引號分單引號及雙引號，通常先用單引號，如果有需要，單引號內再用雙引號。」
+/// 台湾的「单引号」是 `「」`（**外层**）、「双引号」是 `『』`（**内层**）——
+/// 与大陆恰好相反。所以 `“”`（大陆外层）→ `「」`、`‘’`（大陆内层）→ `『』`，
+/// 嵌套也自然对上：`“她说‘你好’”` → `「她说『你好』」`。
+///
+/// 大陆那一档**不动**已有的全角引号 —— 那是它的目标形态，且要求保持现状。
 fn pair_quotes(line: &str, style: QuoteStyle) -> (String, usize) {
     let (open2, close2, open1, close1) = match style {
         QuoteStyle::Mainland => ('“', '”', '‘', '’'),
         QuoteStyle::Corner => ('「', '」', '『', '』'),
         QuoteStyle::Keep => return (line.to_owned(), 0),
     };
+    // 全角引号 → 目标样式。只有港澳台这一档要动
+    const TO_CORNER: [(char, char); 4] = [('“', '「'), ('”', '」'), ('‘', '『'), ('’', '』')];
+    let full: Option<&[(char, char)]> = match style {
+        QuoteStyle::Corner => Some(&TO_CORNER),
+        _ => None,
+    };
     let mut out = String::with_capacity(line.len());
     let mut changed = 0usize;
     let mut double_open = true;
     let mut single_open = true;
     for ch in line.chars() {
+        if let Some((_, to)) = full.and_then(|map| map.iter().find(|(from, _)| *from == ch)) {
+            out.push(*to);
+            changed += 1;
+            continue;
+        }
         match ch {
             '"' => {
                 out.push(if double_open { open2 } else { close2 });
@@ -2647,6 +2670,39 @@ mod tests {
         let sample = "他说\"你好\"...真的吗?他--走了\n甲︐乙";
         let once = by_id("normalize_punctuation", sample);
         assert_eq!(by_id("normalize_punctuation", &once), once);
+    }
+
+    #[test]
+    fn corner_quotes_convert_full_width_ones() {
+        let corner = PipelineStep::NormalizePunctuation(PunctOptions {
+            quote_style: QuoteStyle::Corner,
+            ..PunctOptions::default()
+        });
+        // 中文稿件里几乎都是**全角**引号 —— 这一档此前完全无效，正是要修的地方
+        assert_eq!(run(corner.clone(), "他说“你好”"), "他说「你好」");
+        // 嵌套：大陆的外层 “” 对应台湾的外层 「」，内层 ‘’ 对应 『』
+        // （手册：先用单引号「」，其内再用双引号『』）
+        assert_eq!(
+            run(corner.clone(), "他说“她说‘你好’”"),
+            "他说「她说『你好』」"
+        );
+        // 半角直引号照旧
+        assert_eq!(run(corner.clone(), "他说\"你好\""), "他说「你好」");
+        assert_eq!(run(corner.clone(), "他说‘你好’"), "他说『你好』");
+        // 已经是角引号的不动 —— 也是幂等的保证
+        assert_eq!(run(corner.clone(), "他说「你好」"), "他说「你好」");
+        let once = run(corner.clone(), "他说“她说‘你好’”");
+        assert_eq!(run(corner, &once), once);
+    }
+
+    #[test]
+    fn mainland_quotes_stay_as_they_are() {
+        // 大陆这一档保持现状：只把半角直引号配成对，不碰任何已有的全角引号
+        let mainland = PipelineStep::NormalizePunctuation(PunctOptions::default());
+        assert_eq!(run(mainland.clone(), "他说\"你好\""), "他说“你好”");
+        assert_eq!(run(mainland.clone(), "他说“你好”"), "他说“你好”");
+        assert_eq!(run(mainland.clone(), "他说「你好」"), "他说「你好」");
+        assert_eq!(run(mainland.clone(), "他说『你好』"), "他说『你好』");
     }
 
     #[test]
