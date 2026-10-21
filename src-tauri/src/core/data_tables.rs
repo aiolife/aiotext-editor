@@ -71,14 +71,20 @@ fn legacy_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
             candidates.push(parent.join(LEGACY_RESOURCE_SUBDIR));
         }
     }
-    candidates.extend(embedded::expand(
-        "legacy",
-        &[
-            (FULL_VARIANT_FILE, embedded::LEGACY_FC1),
-            (PARTIAL_VARIANT_FILE, embedded::LEGACY_FC2),
-        ],
-    ));
-    candidates.into_iter().find(|p| p.is_dir())
+    // 磁盘上有就直接用；**都没有**才走内嵌展开（便携版：单 exe 旁边没有 data/）。
+    //
+    // 关键：别把 `expand()` 塞进候选数组里 —— `candidates.extend(expand(..))` 会先
+    // 求值再 `.find()`，等于每次调用都往临时目录写 121 KB，连磁盘上本就有 data/
+    // 的安装版也躲不掉。用 `.or_else()` 才是真正「找不到才兜底」。
+    candidates.into_iter().find(|p| p.is_dir()).or_else(|| {
+        embedded::expand(
+            "legacy",
+            &[
+                (FULL_VARIANT_FILE, embedded::LEGACY_FC1),
+                (PARTIAL_VARIANT_FILE, embedded::LEGACY_FC2),
+            ],
+        )
+    })
 }
 
 /// 解析一张组表：每行一个组，行内字符依次登记；返回组数

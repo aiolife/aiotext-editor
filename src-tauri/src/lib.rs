@@ -59,21 +59,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             use tauri::Manager;
-            // F-04 §4.10：首次启动把内置示例表复制到用户目录（幂等）
-            //
-            // v0.9：这一步挪到**后台线程**。它是真实的磁盘拷贝（几十个 .tab 文件），
-            // 压在 setup 里会直接推迟窗口出现——Tauri 在 setup 返回之后才建窗，
-            // 首次启动时这笔开销最明显。复制本身是幂等的（目标已存在就跳过），
-            // 且命令层 `ensure_replace_tables` 会在用到时再同步兜一次，
-            // 所以「晚一点到」不会影响功能，只是首次打开替换表对话框时可能稍等。
-            let resource_dir = app.path().resource_dir().ok();
-            std::thread::spawn(move || {
-                match core::replace::ensure_builtin_tables(resource_dir.as_deref()) {
-                    Ok(copied) => tracing::info!(copied, "内置替换表检查完成（后台）"),
-                    Err(e) => tracing::warn!(error = %e, "内置替换表初始化失败"),
-                }
-            });
             // 第九阶段：把「启动 < 1.5s」变成可观测、可断言的数字（见 StartupMetrics）
+            //
+            // 这里刻意**不做任何磁盘写入**。内置示例表的复制（F-04 §4.10）原先挂
+            // 在 setup 里（先是前台、后来挪到后台线程），两种写法都会在冷启动时
+            // 白写一遍磁盘；便携版尤其明显，还要从二进制展开 131 KB 到临时目录。
+            // 现已改为**按需**：由命令层 `list_replace_tables` / `load_replace_table`
+            // 在真正要用到时兜一次（幂等），启动路径上彻底没有这笔开销。
             let metrics = StartupMetrics {
                 setup_ms: started.elapsed().as_millis() as u64,
                 debug_build: cfg!(debug_assertions),

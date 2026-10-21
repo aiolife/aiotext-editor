@@ -10,15 +10,39 @@ use crate::core::replace::{
 };
 
 /// 列出全部替换表（用户表 + 内置示例表，F-04 §4.6 `list_replace_tables`）
+///
+/// 内置示例表已改为**按需**落盘：启动时不再后台复制一遍（那等于每次冷启动都白写
+/// 一次磁盘，便携版尤其明显 —— 要从二进制里展开到临时目录）。这里在列出之前兜一次，
+/// 幂等：只复制缺失的文件，不会把用户改名/删掉的内置表覆盖回来。
+///
+/// 注意：`ensure_builtin_tables` 是**同步**磁盘 I/O，必须丢进阻塞线程池。Tauri 的
+/// async 命令默认跑在**主线程**上，直接调用会把窗口与前端渲染一起卡住。
 #[tauri::command]
 pub async fn list_replace_tables() -> Result<Vec<TableMeta>, String> {
-    replace::list_tables().map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Err(e) = replace::ensure_builtin_tables(None) {
+            tracing::warn!(error = %e, "内置替换表初始化失败（不影响用户表）");
+        }
+        replace::list_tables()
+    })
+    .await
+    .map_err(|e| format!("列出替换表任务异常：{e}"))?
+    .map_err(|e| e.to_string())
 }
 
 /// 载入一张表（先用户目录、后内置目录）
 #[tauri::command]
 pub async fn load_replace_table(name: String) -> Result<ReplaceTable, String> {
-    replace::load_table(&name).map_err(|e| e.to_string())
+    // 同上：这条路径可能在「从没打开过替换表对话框」时被直接调用，所以也要兜一次。
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = replace::ensure_builtin_tables(None) {
+            tracing::warn!(error = %e, "内置替换表初始化失败");
+        }
+        replace::load_table(&name)
+    })
+    .await
+    .map_err(|e| format!("载入表任务异常：{e}"))?
+    .map_err(|e| e.to_string())
 }
 
 /// 保存表（结构化；新建重名时自动改名 `name (2)`）
@@ -88,7 +112,12 @@ pub async fn import_textpro_tab(
 }
 
 /// 首次启动复制内置示例表（幂等；返回本次复制数量）
+///
+/// 同步磁盘 I/O，同样丢进阻塞线程池（理由见 `list_replace_tables`）。
 #[tauri::command]
 pub async fn ensure_replace_tables() -> Result<usize, String> {
-    replace::ensure_builtin_tables(None).map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(|| replace::ensure_builtin_tables(None))
+        .await
+        .map_err(|e| format!("内置替换表任务异常：{e}"))?
+        .map_err(|e| e.to_string())
 }

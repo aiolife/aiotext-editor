@@ -1013,15 +1013,18 @@ fn builtin_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
             candidates.push(parent.join(BUILTIN_RESOURCE_SUBDIR));
         }
     }
-    candidates.extend(embedded::expand(
-        "builtin-tables",
-        &[
-            ("ancient-usage.tab", embedded::BUILTIN_ANCIENT),
-            ("cn-punct.tab", embedded::BUILTIN_CN_PUNCT),
-            ("simplified-variants.tab", embedded::BUILTIN_SIMPLIFIED),
-        ],
-    ));
-    candidates.into_iter().find(|p| p.is_dir())
+    // 同 `data_tables::legacy_dir`：用 `.or_else()` 兜底，别写成 `candidates.extend(expand(..))`
+    // —— 那会让展开**无条件**发生，每次调用都写一份临时目录。
+    candidates.into_iter().find(|p| p.is_dir()).or_else(|| {
+        embedded::expand(
+            "builtin-tables",
+            &[
+                ("ancient-usage.tab", embedded::BUILTIN_ANCIENT),
+                ("cn-punct.tab", embedded::BUILTIN_CN_PUNCT),
+                ("simplified-variants.tab", embedded::BUILTIN_SIMPLIFIED),
+            ],
+        )
+    })
 }
 
 /// 首次启动把内置示例表复制到 `<tables>/builtin/`（F-04 §4.10）

@@ -1661,3 +1661,55 @@ artifact 的 7.99 MB 也印证了两个 exe 都在里面（单个 nsis 只有 4.
 
 **说明**：优化后「首次仍比后续慢几十到上百毫秒」的那部分来自 OS 文件缓存冷读与
 二进制 demand paging，属系统行为，不在应用内可优化的范围。
+---
+
+## 开发日志 023 — 2026-10-22（启动提速：别在启动路径上写盘、别在主线程上做 I/O）
+
+**现象**：首次启动并打开一个空文件明显偏慢。
+
+**实测**（临时脚本 `scripts/perf-startup.mjs`，用完已删）：
+
+```
+进程启动 → WebView 页面出现：约 300 ms
+WebView 出现 → 编辑器就绪  ：约 220 ms
+【合计端到端】             ：817 ~ 887 ms（未超第九阶段 1.5s 预算）
+后端自报 setupMs           ：514 ~ 525 ms
+前端 domContentLoaded      ：130 ~ 162 ms
+```
+
+结论与上一轮（022，优化的是大文件的 chardetng 全量扫描）**性质完全不同**：
+这次是**与文件大小无关的固定开销**，且大头（约 520ms）在 Tauri/WRY 创建
+WebView2 窗口 —— 框架与系统级开销，应用层改不了。首次与后续只差
+100~170ms，也说明并非「首次特有」的巨大开销，而是基础启动就接近 1 秒。
+
+**本轮修的两个应用层问题**：
+
+1. **`embedded::expand` 被无条件求值**
+   `data_tables.rs` 与 `replace.rs` 原先写成
+   `candidates.extend(embedded::expand(..))` 后再 `.find()` —— 数组先构造，
+   expand 就**无条件**执行了。于是哪怕磁盘上本就有 `data/legacy`，每次启动
+   也会往临时目录白写一份（121 KB + 10 KB）。证据：`%TEMP%` 下累积了 41 个
+   `aiotext-legacy-<pid>` 与 39 个 `aiotext-builtin-tables-<pid>` 目录。
+   改为 `.or_else(..)`：磁盘候选都没有时才兜底展开，且只有便携版（单 exe
+   旁边没有 `data/`）才会真正触发。
+
+2. **内置替换表的复制从「启动时后台预热」改为「按需」**
+   原先 setup 里 `spawn` 一个后台线程跑 `ensure_builtin_tables`，冷启动时
+   仍白写一次磁盘。现在挪到命令层：由 `list_replace_tables` / `load_replace_table`
+   在真正要用到时兜一次（幂等，只补缺失文件，不会覆盖用户改名/删掉的内置表）。
+   同时把前端**定义了却从未被调用**的 `ensureReplaceTables()` 真正接进
+   `ReplaceTableDialog` 的 `refresh()`，让兜底路径有实际的调用方。
+
+**踩到并修掉的坑（重要）**：
+`ensure_builtin_tables` 是**同步**磁盘 I/O，而 Tauri 的 async 命令默认跑在
+**主线程**。第一版直接把它塞进 `list_replace_tables` 里，结果主线程被卡住 ——
+启动耗时从 844ms 飙到 **22 秒**，IPC 全部报 `Origin header is not a valid URL`。
+修法：这类同步 I/O 一律用 `tauri::async_runtime::spawn_blocking` 包起来
+（`list_replace_tables` / `load_replace_table` / `ensure_replace_tables` 三处）。
+
+**验证**：端到端回到 844 / 961 ms，`setupMs` 516 / 620 ms，`debugBuild: false`；
+内置表按需兜底确认生效 —— 删掉 `tables/builtin/` 后启动，三张表被自动重建；
+Rust 221 项、前端 185/185、ESLint 干净、冒烟 41 通过 / 0 失败。
+
+**取舍**：约 520ms 的 WebView2 窗口创建属框架/系统开销，应用层无法消除，
+故按「保持现状」处理 —— 本轮只清掉启动路径上本不该有的磁盘写入。

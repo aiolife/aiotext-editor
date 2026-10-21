@@ -11,6 +11,7 @@ import {
   NEW_TABLE_TEMPLATE,
   applyReplace,
   deleteReplaceTable,
+  ensureReplaceTables,
   importTextproTab,
   listReplaceTables,
   parseReplaceTableText,
@@ -91,6 +92,10 @@ export function ReplaceTableDialog({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    // 内置示例表是**按需**落盘的（见 lib.rs setup 的说明）：启动时不再后台复制，
+    // 改在打开本对话框时兜一次 —— 幂等，只补缺失的文件，不会把用户改名/删掉的
+    // 内置表覆盖回来。失败也不阻塞，列表照拉（大不了内置表暂时不显示）。
+    await ensureReplaceTables().catch(() => {});
     const list = await listReplaceTables();
     setTables(list);
     onTablesChanged();
