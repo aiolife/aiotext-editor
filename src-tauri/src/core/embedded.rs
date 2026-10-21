@@ -32,18 +32,31 @@ static EXPANDED: LazyLock<Mutex<HashMap<String, PathBuf>>> =
 ///
 /// `files` 是 `(文件名, 内容)`；同一 `name` 在进程内只展开一次。
 /// 展开失败（临时目录不可写）返回 `None`，调用方按「资源缺失」处理。
+///
+/// **目录名不带 pid**（重要）：早先写成 `aiotext-<name>-<pid>`，结果每次启动都
+/// 新建一个目录、且从不清理 —— 实测 `%TEMP%` 下累积了 1500+ 个目录、340 MB。
+/// 这既白占磁盘，也让「首次启动」随使用次数越来越慢。
+/// 改成固定目录名后：内容一致就跳过写入（幂等），跨进程跨实例共享同一份；并发写
+/// 由 `write_atomic`（先写 .tmp 再 rename）保证不会读到半截内容。
 pub fn expand(name: &str, files: &[(&str, &[u8])]) -> Option<PathBuf> {
     let mut map = EXPANDED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(dir) = map.get(name) {
         return Some(dir.clone());
     }
-    let dir = std::env::temp_dir().join(format!("aiotext-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("aiotext-{name}"));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::warn!(error = %e, "内嵌资源目录创建失败");
         return None;
     }
     for (file, bytes) in files {
-        if let Err(e) = write_atomic(&dir.join(file), bytes) {
+        let path = dir.join(file);
+        // 已存在且大小一致 → 视为同一份内容，跳过写入
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() == bytes.len() as u64 {
+                continue;
+            }
+        }
+        if let Err(e) = write_atomic(&path, bytes) {
             tracing::warn!(error = %e, file, "内嵌资源展开失败");
             return None;
         }
