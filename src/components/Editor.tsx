@@ -463,13 +463,16 @@ export function Editor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (view.state.doc.toString() !== tabRef.current.content) {
+    const next = tabRef.current.content;
+    // 先用 O(1) 的长度比较挡一道：长度不同就必然不同，没必要再构造整篇
+    // String 去比对。切换标签时两个文件长度几乎不可能相同，这条路就是常态。
+    if (view.state.doc.length !== next.length || view.state.doc.toString() !== next) {
       suppressRef.current = true;
       view.dispatch({
         changes: {
           from: 0,
           to: view.state.doc.length,
-          insert: tabRef.current.content,
+          insert: next,
         },
       });
       suppressRef.current = false;
@@ -485,10 +488,13 @@ export function Editor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (view.state.doc.toString() !== tab.content) {
+    const doc = view.state.doc;
+    // 同上：长度先挡一道。日常编辑时 tab.content 与 doc 本来就是同一份新
+    // String，长度相等，真正走到 toString() 的只在该同步的场合。
+    if (doc.length !== tab.content.length || doc.toString() !== tab.content) {
       suppressRef.current = true;
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: tab.content },
+        changes: { from: 0, to: doc.length, insert: tab.content },
       });
       suppressRef.current = false;
     }

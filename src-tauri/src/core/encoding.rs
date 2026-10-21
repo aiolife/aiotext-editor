@@ -268,9 +268,26 @@ pub fn detect(bytes: &[u8]) -> (Encoding, bool) {
     }
 
     // 统计探测（中文 TLD 无域名可用 → None；UTF-8 严格已失败故不再猜 UTF-8）
+    //
+    // **只喂前一段**：编码是整份文件的属性，采样一小段就足够判定；而
+    // chardetng 的 n-gram 统计是 O(n) 且常数不小 —— 实测 4 MB 的 GBK 文件，
+    // 光探测就要 1.1 秒，等于为「猜编码」白付了一遍全文扫描。
+    //
+    // 采样量不是越大越准（实测反直觉）：同一份 GBK 文件，采样 1KB 能猜对，
+    // 喂到 8KB~256KB 反而被文中的 ASCII（数字、标点、换行）带偏成 latin1。
+    // 所以这里取 1KB，并在下面对兜底答案回落全文。
+    const DETECT_SAMPLE: usize = 1024;
+    let sample = &bytes[..bytes.len().min(DETECT_SAMPLE)];
     let mut detector = chardetng::EncodingDetector::new();
-    detector.feed(bytes, true);
-    let guessed = detector.guess(None, false);
+    detector.feed(sample, true);
+    let mut guessed = detector.guess(None, false);
+    // `windows-1252` 是 chardetng 的兜底答案（等于「没认出来」）。中文文本被猜
+    // 成它，多半只是采样这段没抓到中文特征 —— 这不算数，拿全文再猜一次。
+    if guessed.name() == "windows-1252" && bytes.len() > DETECT_SAMPLE {
+        let mut d = chardetng::EncodingDetector::new();
+        d.feed(bytes, true);
+        guessed = d.guess(None, false);
+    }
     let encoding = match guessed.name() {
         "GBK" => Encoding::Gbk,
         "gb18030" => Encoding::Gb18030,
@@ -450,6 +467,35 @@ mod cp437 {
 /// 大文件上这是「三次全量扫描」与「一次」的区别。
 fn detect_line_ending(text: &str) -> LineEnding {
     let bytes = text.as_bytes();
+    // 快速路径：绝大多数文件行尾**统一**，碰到第一个行尾就能定风格，直接返回。
+    // 原先为了统计「多数派」必须扫完整篇；大文件上这一趟并不便宜。
+    // 只有真的出现了另一种行尾（混用）时才退回全量统计 —— 那时才需要多数派。
+    let mut i = 0;
+    let mut first: Option<LineEnding> = None;
+    while i < bytes.len() {
+        let hit = match bytes[i] {
+            b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => Some(LineEnding::CrLf),
+            b'\r' => Some(LineEnding::Cr),
+            b'\n' => Some(LineEnding::Lf),
+            _ => None,
+        };
+        match hit {
+            None => i += 1,
+            Some(style) => {
+                match first {
+                    None => first = Some(style),
+                    Some(prev) if prev == style => {}
+                    Some(_) => return majority_line_ending(bytes), // 混用 → 全量统计
+                }
+                i += if style == LineEnding::CrLf { 2 } else { 1 };
+            }
+        }
+    }
+    first.unwrap_or(LineEnding::Lf) // 无换行按 LF
+}
+
+/// 行尾风格的多数派统计（**只有**检测到混用行尾时才需要走这条路）
+fn majority_line_ending(bytes: &[u8]) -> LineEnding {
     let (mut crlf, mut cr_only, mut lf_only) = (0usize, 0usize, 0usize);
     let mut i = 0;
     while i < bytes.len() {
@@ -471,7 +517,7 @@ fn detect_line_ending(text: &str) -> LineEnding {
     }
 
     match (crlf, cr_only, lf_only) {
-        (0, 0, 0) => LineEnding::Lf, // 无换行按 LF
+        (0, 0, 0) => LineEnding::Lf,
         (0, 0, _) => LineEnding::Lf,
         (0, _, 0) => LineEnding::Cr,
         (_, 0, 0) => LineEnding::CrLf,
