@@ -205,6 +205,15 @@ pub struct Settings {
     pub compare: CompareOptions,
     /// 快捷键覆盖表（见模块头注释的「三态约定」）
     pub shortcuts: BTreeMap<String, String>,
+    /// 关闭主窗口时**隐藏**而不是退出进程。
+    ///
+    /// 开启后进程常驻，再次启动走单实例的「聚焦已有窗口」，省掉重建 WebView2
+    /// 的那几百毫秒（实测二次启动 748ms → 66~127ms）。
+    ///
+    /// 默认关闭：保持「关闭即退出」的既有行为，也就不必常驻那几百 MB 内存；
+    /// 想要这个提速的用户自己在设置里打开。开启后由 `tray` 模块提供唤回与
+    /// 真正退出的入口——没有那个入口，隐藏就等于把窗口弄丢了。
+    pub hide_on_close: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -309,6 +318,11 @@ pub fn load_from(path: &Path) -> Settings {
         conversion: recover_section::<ConversionPrefs>(incoming.get("conversion")),
         compare: recover_section::<CompareOptions>(incoming.get("compare")),
         shortcuts: recover_shortcuts(incoming.get("shortcuts")),
+        // 布尔量没有「越界」一说：不是布尔就回落默认（= 关闭，保持既有的退出行为）
+        hide_on_close: incoming
+            .get("hideOnClose")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_default(),
     };
     tracing::warn!(
         path = %path.display(),

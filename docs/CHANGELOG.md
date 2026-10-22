@@ -1749,3 +1749,94 @@ Rust 221 项、前端 185/185、ESLint 干净、冒烟 41 通过 / 0 失败。
 **验证**：便携版连续启动 3 次，临时目录数保持 29 个（全是历史遗留、
 无新增），且目录名已是不带 pid 的形式。Rust 221 项、前端 185/185、
 ESLint 干净、冒烟 41 通过 / 0 失败。
+
+## 开发日志 025 — 2026-10-22（启动提速：参考 Zed 排查后的结论与「关闭时隐藏」开关）
+
+### 背景
+
+用户反馈「首次启动并打开文件明显慢」，并指出约 520ms 的 WebView2 窗口创建
+属框架 / 系统开销，问参考 Zed 能否再提速。
+
+### 排查结论：应用层已经没有可优化空间（实测，不是估计）
+
+把端到端 ~800ms 拆开逐段测：
+
+| 阶段 | 耗时 | 能否优化 |
+| --- | --- | --- |
+| 进程 → 页面 target（WebView2 环境创建） | 426~523 ms | 否，框架 / 系统固有 |
+| 前端 JS 执行（CodeMirror + React 全部） | **31 ms** | 否，已经极小 |
+| 启动 IPC（6 个命令） | ~15 ms | 否，**已并行** |
+| 其余（idle / 渲染 / V8 内部） | ~150~270 ms | 否，浏览器内部 |
+| **端到端** | **730~837 ms** | |
+
+三条路都试过或论证过，都不通：
+
+1. **拆包 / 砍 CodeMirror extension** —— CPU Profiler 采样显示应用 JS 自身
+   只占 31ms（`(idle)` 15ms、`(program)` 13ms、业务代码 31ms），全砍了也省不到
+   15ms。顺带确认 bundle 是干净的：`lang-markdown`、`@codemirror/search`
+   在源码里零引用，已被 tree-shaking 剔除。
+2. **合并启动 IPC** —— 实测 6 个命令是并行发起的（startTime 都在 ≈126ms，
+   ≈141ms 全部结束），合并零收益。
+3. **WebView2 启动参数**（`--no-first-run`、`--disable-background-networking`
+   等 7 个）—— 进程→target 469ms → 463ms，差 6ms，在噪声内，**无效**。
+
+> 测量方法记一笔：release 产物没开 tauri 的 devtools feature，命令行
+> `--remote-debugging-port` 不生效，要连 CDP 必须走
+> `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 环境变量。
+
+### Zed 能给什么
+
+Zed 冷启动 0.187s（VS Code 1.234s），但它**根本不用 WebView** —— 自研 GPUI +
+GPU 自绘。它的快是「换赛道」换来的，不是调优调出来的；我们靠 WebView2 换
+跨平台 UI，这 ~470ms 就是这笔交易的固有成本，**GPUI 抄不了**（等于重写整个 UI）。
+
+Zed 三条原则里我们已落实两条：「重活给后台」（`spawn_blocking`，见日志 023）、
+「按需加载」（对话框 lazy、内置替换表按需）。**剩下唯一能抄的是「进程常驻」**
+—— Zed 关掉窗口后进程仍在，再次打开是瞬时的。
+
+### 实施：做成可选开关，默认关闭
+
+新增设置 `hideOnClose`（默认 `false`）：
+
+- **默认（关闭）**：保持「关闭即退出」，不常驻内存，行为与之前完全一致。
+- **开启后**：关闭主窗口 = 隐藏窗口 + 托盘图标亮起。再次启动走已有的
+  single-instance「聚焦已有窗口」，不再重建 WebView2。
+
+**托盘是必要配套，不是装饰**：开启隐藏后若没有托盘，窗口就再也唤不回来、
+也没法真正退出 —— 那是体验事故。托盘只在窗口被隐藏时出现（建成即
+`set_visible(false)`），默认路径下任务栏不会多出图标。
+
+实现要点：
+
+- `core/settings.rs` 新增 `hide_on_close`；`serde(default)` 保证旧配置兼容，
+  逐字段恢复路径（`load_from` 的慢路径）也补上了该字段。
+- 新增 `src/tray.rs`（依赖 Tauri，故不放 `core/` —— `core` 的约定是纯 Rust、
+  独立可单测）。当前 Tauri 版本的 `Manager` **没有** `tray_by_id`
+  （按 id 反查），所以自己用 `TrayHandle` 存一份句柄。
+- `Cargo.toml` 的 tauri features 加 `tray-icon`（托盘在该 feature 之后才存在）。
+
+### 实测验证
+
+| 场景 | 结果 |
+| --- | --- |
+| 默认（`hideOnClose` 缺失 / false） | 关闭后**进程退出** ✓ 行为不变 |
+| 开启 `hideOnClose` | 关闭后窗口隐藏、进程存活 ✓ |
+| 常驻下二次启动 | **122 ms**（冷启动 ~800ms，提速约 85%） |
+| 冷启动（含 tray-icon） | 794~837 ms，与改动前 748~808 ms 持平，**没变慢** |
+
+> 测试过程踩了三个坑，记下来免得再犯：
+> ① `plugin:window|close` 被 ACL 拒绝（`not allowed by ACL`）；
+> ② 浏览器原生的 `window.close()` 会直接销毁页面、**不走** `CloseRequested`；
+> ③ `Runtime.evaluate` 里调 invoke 必须 `awaitPromise: true`，否则拿到的是
+> Promise 对象本身，命令失败也看不出来 —— 前两条正是被第三条掩盖了很久。
+> 最后是用向主窗口发 `WM_CLOSE`（等价于点标题栏的 ×）才测准。
+
+### 代价
+
+- 开启后进程常驻：主进程 28 MB + WebView2 约 308 MB ≈ **336 MB**。
+- **首次启动仍是 ~800ms** —— 常驻只优化第二次及以后。
+- 产物体积 +0.08 MiB（便携 exe 7.70 → 7.78 MiB）。
+
+### 回归
+
+Rust 269 项、前端 185 项、冒烟 41 通过 / 0 失败（用新打包产物跑）。

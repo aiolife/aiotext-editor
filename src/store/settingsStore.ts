@@ -56,6 +56,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   compare: { ...DEFAULT_COMPARE_OPTIONS },
   shortcuts: {},
+  // 默认关闭：保持「关闭即退出」，不常驻内存（与后端 `Settings::default()` 一致）
+  hideOnClose: false,
 };
 
 interface SettingsState {
@@ -109,6 +111,7 @@ function readCache(): Settings {
       conversion: { ...DEFAULT_SETTINGS.conversion, ...saved.conversion },
       compare: { ...DEFAULT_SETTINGS.compare, ...saved.compare },
       shortcuts: saved.shortcuts ?? {},
+      hideOnClose: saved.hideOnClose ?? false,
     };
   } catch {
     return DEFAULT_SETTINGS;

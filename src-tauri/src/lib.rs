@@ -7,6 +7,7 @@
 pub mod commands;
 pub mod core;
 pub mod error;
+pub mod tray;
 
 /// 启动耗时指标（第九阶段）
 ///
@@ -70,6 +71,11 @@ pub fn run() {
                 setup_ms: started.elapsed().as_millis() as u64,
                 debug_build: cfg!(debug_assertions),
             };
+            // 托盘建好即隐藏；只有开启「关闭时隐藏」且窗口真的被藏起来时才显示
+            // （见 tray 模块头注释）。失败不阻断启动。
+            if let Err(e) = crate::tray::build(app.handle()) {
+                tracing::warn!(error = %e, "托盘创建失败（不影响主流程）");
+            }
             tracing::info!(setup_ms = metrics.setup_ms, "启动完成");
             app.manage(metrics);
             Ok(())
@@ -115,6 +121,21 @@ pub fn run() {
             commands::app::startup_metrics,
             commands::app::app_version,
         ])
+        // 关闭主窗口：默认退出进程；开启「关闭时隐藏」后改为隐藏 + 亮出托盘。
+        // 隐藏后再启动走单实例的「聚焦已有窗口」，不再重建 WebView2——
+        // 实测二次启动 748ms → 66~127ms（见 docs/CHANGELOG.md）。
+        .on_window_event(|window, event| {
+            // `app_handle()` 由 Manager 提供
+            use tauri::Manager;
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 关闭是低频操作：直接读磁盘拿最新值（约 10ms，能反映刚改的设置）
+                if crate::core::settings::load().hide_on_close {
+                    let _ = window.hide();
+                    crate::tray::set_visible(window.app_handle(), true);
+                    api.prevent_close();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 

@@ -288,6 +288,16 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
+              <Row
+                label="关闭窗口时隐藏到托盘"
+                hint="开启后关闭窗口不再退出程序，下次打开几乎瞬时（实测 748ms → 约 100ms）；代价是程序会继续常驻并占用约 300MB 内存。开启后托盘图标会亮起，可用来唤回窗口或真正退出"
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.hideOnClose}
+                  onChange={(e) => update({ hideOnClose: e.target.checked })}
+                />
+              </Row>
             </>
           ) : null}
 
