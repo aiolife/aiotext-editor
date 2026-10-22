@@ -40,6 +40,18 @@ export interface CommandMeta {
   group: string;
   /** 默认键位（规范字符串）；`null` = 默认不绑定 */
   defaultKey: string | null;
+  /**
+   * **只用来在菜单里显示**、不参与分发的键位。
+   *
+   * 给「按键实际由 CodeMirror 自己处理」的命令用：撤销 / 重做走
+   * `historyKeymap`（Mod-Z / Mod-Y），行上移 / 行下移走 `defaultKeymap`
+   * （Alt-↑ / Alt-↓）。这类命令若写进 `defaultKey`，App 分发器和
+   * CodeMirror 会各执行一次 —— 撤销一次等于退两步、移动行一下挪两行
+   * （`edit.undo` / `edit.redo` 当初就是因此留空，见下方注释）。
+   * 但留空后菜单右侧就什么都不显示，看着像「没有快捷键」，故补这一个
+   * 纯展示字段：菜单写得出键位，分发仍然只发生一次。
+   */
+  displayKey?: string;
 }
 
 /**
@@ -105,9 +117,27 @@ export const COMMANDS: readonly CommandMeta[] = [
   // 编辑基础动作（PRD v0.6 §3.5：菜单要能点；键位不动 CodeMirror 自己的那一套）
   // 撤销 / 重做**刻意不绑默认键**：Mod-Z / Mod-Shift-Z 由编辑器快捷键处理，
   // 若这里也绑一份，App 分发器和 CodeMirror 会各撤销一次（等于一次撤销两步）。
-  { id: 'edit.undo', label: '撤销', group: '编辑', defaultKey: null },
-  { id: 'edit.redo', label: '重做', group: '编辑', defaultKey: null },
+  // 键位写进 `displayKey` 而不是 `defaultKey`：Mod-Z / Mod-Y（macOS 重做是 ⇧⌘Z）
+  // 由 CodeMirror 的 historyKeymap 处理，App 再分发一次就会一次撤销两步。
+  { id: 'edit.undo', label: '撤销', group: '编辑', defaultKey: null, displayKey: mod('z') },
+  {
+    id: 'edit.redo',
+    label: '重做',
+    group: '编辑',
+    defaultKey: null,
+    displayKey: IS_MAC ? 'shift+meta+z' : mod('y'),
+  },
   { id: 'edit.goto', label: '跳转…', group: '编辑', defaultKey: mod('g') },
+  // 列编辑（垂直选择）：矩形选区能力由 CodeMirror 的 `rectangularSelection`
+  // 提供（Alt+拖动）；菜单项负责把已有的普通选区转成矩形选区。
+  { id: 'edit.column', label: '列编辑（垂直选择）', group: '编辑', defaultKey: null },
+  // 行互换：Alt-↑ / Alt-↓ 由 defaultKeymap 的 moveLineUp / moveLineDown 处理，
+  // 同样只显示键位；「与上一行交换」是本应用新增的，故真的参与分发。
+  { id: 'edit.moveLineUp', label: '行上移', group: '编辑', defaultKey: null, displayKey: 'alt+up' },
+  { id: 'edit.moveLineDown', label: '行下移', group: '编辑', defaultKey: null, displayKey: 'alt+down' },
+  { id: 'edit.swapLineUp', label: '与上一行交换', group: '编辑', defaultKey: 'alt+s' },
+  { id: 'edit.insertTime', label: '插入时间', group: '编辑', defaultKey: null },
+  { id: 'edit.updateTime', label: '更新时间', group: '编辑', defaultKey: null },
 
   // 搜索
   { id: 'search.find', label: '查找…', group: '搜索', defaultKey: mod('f') },

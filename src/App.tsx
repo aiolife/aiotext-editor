@@ -808,10 +808,25 @@ export default function App() {
    * 同一个毫秒里连点两次撤销会撞号导致第二次丢失，故用自增序号。
    */
   const editorCommandNonceRef = useRef(0);
-  const sendEditorCommand = useCallback((kind: 'undo' | 'redo' | 'goto', line?: number) => {
-    editorCommandNonceRef.current += 1;
-    setEditorCommand({ kind, line, nonce: editorCommandNonceRef.current });
-  }, []);
+  const sendEditorCommand = useCallback(
+    (
+      kind:
+        | 'undo'
+        | 'redo'
+        | 'goto'
+        | 'column'
+        | 'lineUp'
+        | 'lineDown'
+        | 'swapLineUp'
+        | 'insertTime'
+        | 'updateTime',
+      line?: number,
+    ) => {
+      editorCommandNonceRef.current += 1;
+      setEditorCommand({ kind, line, nonce: editorCommandNonceRef.current });
+    },
+    [],
+  );
 
   /** 长字符串截断显示（统计对话框里的「选定文字」） */
   const snippet = (text: string, max = 24) =>
@@ -1341,6 +1356,30 @@ export default function App() {
       'edit.undo': { run: () => sendEditorCommand('undo'), enabled: () => activeTab !== null },
       'edit.redo': { run: () => sendEditorCommand('redo'), enabled: () => activeTab !== null },
       'edit.goto': { run: () => setGotoOpen(true), enabled: () => activeTab !== null },
+      // 列编辑（垂直选择）：把当前选区转成矩形选区；矩形框选本身是 Alt+拖动
+      'edit.column': { run: () => sendEditorCommand('column'), enabled: () => activeTab !== null },
+      // 行互换：上移 / 下移与键盘 Alt+↑ / Alt+↓ 是同一套 CodeMirror 命令，
+      // 只是菜单没有键盘入口，故从这里发意图
+      'edit.moveLineUp': {
+        run: () => sendEditorCommand('lineUp'),
+        enabled: () => activeTab !== null,
+      },
+      'edit.moveLineDown': {
+        run: () => sendEditorCommand('lineDown'),
+        enabled: () => activeTab !== null,
+      },
+      'edit.swapLineUp': {
+        run: () => sendEditorCommand('swapLineUp'),
+        enabled: () => activeTab !== null,
+      },
+      'edit.insertTime': {
+        run: () => sendEditorCommand('insertTime'),
+        enabled: () => activeTab !== null,
+      },
+      'edit.updateTime': {
+        run: () => sendEditorCommand('updateTime'),
+        enabled: () => activeTab !== null,
+      },
       // 比较
       'compare.next': { run: goNextDiff, enabled: () => diffResult !== null },
       'compare.previous': {

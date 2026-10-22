@@ -948,6 +948,12 @@ body,
   outline: 1px solid rgba(0, 132, 255, 0.5);
 }
 
+/* 行互换之后短暂标黄「这一行跑到哪去了」（约 1 秒，见 Editor.tsx 的 flashField）。
+   半透明是为了在浅色 / 深色主题下都能看出来。 */
+.cm-swap-flash {
+  background: rgba(255, 214, 0, 0.35);
+}
+
 /* ---------- 替换表管理对话框（F-04） ---------- */
 
 .dialog-table {

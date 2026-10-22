@@ -128,13 +128,17 @@ export function MenuBar({
 
   const accelOf = (id: string): string | null => {
     const key = bindings.get(id)?.key;
-    return key ? formatKey(key) : null;
+    if (key) return formatKey(key);
+    // 该命令的键位实际由编辑器（CodeMirror）处理、默认不参与分发，
+    // 菜单照样把键位显示出来（否则看着像「没有快捷键」）。
+    const display = commandById(id)?.displayKey;
+    return display ? formatKey(display) : null;
   };
 
   const enabledOf = (id: string): boolean => handlers[id]?.enabled?.() ?? true;
 
   /** 命令项：标签 / 键位 / 可用性全部现取，不写死 */
-  const commandItem = (id: string, labelOverride?: string) => {
+  const commandItem = (id: string, labelOverride?: string, hint?: string) => {
     const handler = handlers[id];
     const label = labelOverride ?? commandById(id)?.label ?? id;
     return (
@@ -144,6 +148,7 @@ export function MenuBar({
         role="menuitem"
         className="menu-item menu-item-row"
         disabled={handler === undefined || !enabledOf(id)}
+        title={hint}
         onClick={() => fire(() => handler?.run())}
       >
         <span className="menu-item-label">{label}</span>
@@ -183,7 +188,15 @@ export function MenuBar({
   const submenuItem = (
     key: string,
     label: string,
-    items: { key: string; label: string; run: () => void; disabled?: boolean; hint?: string }[],
+    items: {
+      key: string;
+      label: string;
+      run: () => void;
+      disabled?: boolean;
+      hint?: string;
+      /** 右侧键位提示（「行互换 ▸」里的 Alt+↑ / Alt+↓ / Alt+S） */
+      more?: string;
+    }[],
     disabled = false,
   ) => (
     <div
@@ -218,12 +231,13 @@ export function MenuBar({
                 key={item.key}
                 type="button"
                 role="menuitem"
-                className="menu-item"
+                className="menu-item menu-item-row"
                 disabled={item.disabled}
                 title={item.hint}
                 onClick={() => fire(item.run)}
               >
-                {item.label}
+                <span className="menu-item-label">{item.label}</span>
+                <span className="menu-item-more">{item.more ?? ''}</span>
               </button>
             ))
           )}
@@ -327,6 +341,44 @@ export function MenuBar({
         })),
       )}
       {plainItem('convert-tables', '替换表管理…', !convertDisabled, actions.tables)}
+      <div className="menu-sep" />
+      {commandItem(
+        'edit.column',
+        undefined,
+        'Alt+拖动 直接框选矩形；或先选中一块区域，再点此项把它转成列（矩形）选区',
+      )}
+      {submenuItem(
+        'edit-swap-line',
+        '行互换',
+        [
+          {
+            key: 'edit.moveLineUp',
+            label: '行上移',
+            run: () => handlers['edit.moveLineUp']?.run(),
+            disabled: !hasActiveTab,
+            more: accelOf('edit.moveLineUp') ?? undefined,
+          },
+          {
+            key: 'edit.moveLineDown',
+            label: '行下移',
+            run: () => handlers['edit.moveLineDown']?.run(),
+            disabled: !hasActiveTab,
+            more: accelOf('edit.moveLineDown') ?? undefined,
+          },
+          {
+            key: 'edit.swapLineUp',
+            label: '与上一行交换',
+            run: () => handlers['edit.swapLineUp']?.run(),
+            disabled: !hasActiveTab,
+            hint: '把当前行整行与上一行对调（已在第一行时无动作）',
+            more: accelOf('edit.swapLineUp') ?? undefined,
+          },
+        ],
+        !hasActiveTab,
+      )}
+      <div className="menu-sep" />
+      {commandItem('edit.insertTime', undefined, '在光标处插入当前时间（2026/10/22 15:30:45）')}
+      {commandItem('edit.updateTime', undefined, '选区是时间戳就更新为当前时间，否则当作插入')}
       <div className="menu-sep" />
       {plainItem('compare', '比较…', !compareDisabled, actions.compare, {
         hint: '平铺比较两份文本（F-06）：F5 跳差异，Shift+F5 从光标重比',
