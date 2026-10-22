@@ -26,6 +26,7 @@ import {
   drawSelection,
   keymap,
   lineNumbers,
+  rectangularSelection,
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view';
@@ -361,15 +362,16 @@ function updateTimestamp(view: EditorView): void {
 /**
  * 垂直选择（列编辑）模式的核心。
  *
- * **为什么不用 CodeMirror 自带的 `rectangularSelection()`**：用户实测按住 Alt
- * 斜着拖框不出矩形，本机自动化同样测不出多光标；但代码侧查遍了——没有
- * `allowMultipleSelections` 设置、没有 transaction filter 规整选区、updateListener
- * 也只上报不回写——找不到任何拦截多选区的东西。与其继续猜，不如自己接管：用
- * 公开的 `posAtCoords` 算行列、自己拼多行 range，行为完全可控。
+ * 矩形框选**直接用 CodeMirror 原生的 `rectangularSelection()`（Alt+拖动）**，
+ * 这里只管三件事：模式的进出、方向键微调、以及把「当前几行 × 几列」同步出去。
+ *
+ * 早先绕开原生自己去接管鼠标，是因为没查出它为什么不生效；真凶查明后
+ * （`allowMultipleSelections` 默认关闭，见下方 extensions 里的注释）原生那条路
+ * 一直是通的，所以改回来用官方实现。
  *
  * 矩形内部用「起始行 / 结束行 / 起始列 / 结束列」四个数表示，而不是存一堆
- * selected range：扩展与收窄都是在这四个数上做加减，来回换算会丢信息。
- * `colEnd === colStart` 表示**零宽**——即多行同一个列的多个光标（还没选中内容）。
+ * selected range：微调都是在这四个数上做加减，来回换算会丢信息。
+ * `colEnd === colStart` 表示**零宽**——多行同一列的多个光标（还没选中内容）。
  */
 interface VRect {
   startLine: number;
@@ -397,11 +399,35 @@ const vRectField = StateField.define<VRect | null>({
   },
 });
 
-/** 屏幕坐标 → 行列。`posAtCoords` 会贴到最近的位置，行尾以外按行尾算 */
-function posToCell(view: EditorView, x: number, y: number): { line: number; col: number } {
-  const pos = view.posAtCoords({ x, y }, false);
-  const line = view.state.doc.lineAt(pos);
-  return { line: line.number, col: pos - line.from };
+/** 标记「这个 transaction 是本模块下的矩形」，用来和 Alt+拖动产生的选区区分开 */
+const fromApplyRectAnn = Annotation.define<boolean>();
+
+/**
+ * 从现有选区反推矩形 —— 用于接纳 **Alt+拖动** 这类不是本模块下的矩形。
+ *
+ * 走 `rectangularSelection()` 的拖动直接改 selection，不经过 `applyRect`，
+ * `vRectField` 会停在旧值；不反推的话状态栏一直显示上一次的结果，后续微调也
+ * 会从错的矩形出发。逐 range 取公共列起点与最大列终点，行范围取并集。
+ */
+function selectionToRect(view: EditorView): VRect | null {
+  const ranges = view.state.selection.ranges;
+  if (ranges.length === 0) return null;
+  const doc = view.state.doc;
+  let startLine = Infinity;
+  let endLine = 0;
+  let colStart = Infinity;
+  let colEnd = 0;
+  for (const range of ranges) {
+    const from = Math.min(range.from, range.to);
+    const to = Math.max(range.from, range.to);
+    const line = doc.lineAt(from);
+    startLine = Math.min(startLine, line.number);
+    endLine = Math.max(endLine, line.number);
+    colStart = Math.min(colStart, from - line.from);
+    colEnd = Math.max(colEnd, to - line.from);
+  }
+  if (!Number.isFinite(startLine) || !Number.isFinite(colStart)) return null;
+  return { startLine, endLine, colStart, colEnd };
 }
 
 /** 矩形 → 多行选区；越界的行列在这里夹回文档范围内 */
@@ -425,6 +451,7 @@ function applyRect(view: EditorView, rect: VRect | null): void {
     effects: setVRect.of(rect),
     selection: rect ? rectToSelection(view, rect) : { anchor: view.state.selection.main.head },
     scrollIntoView: rect !== null,
+    annotations: fromApplyRectAnn.of(true),
   });
   view.focus();
 }
@@ -465,44 +492,28 @@ function expandRow(view: EditorView, upward: boolean): boolean {
 }
 
 /**
- * Alt+Shift 斜着拖 —— 框出矩形。
+ * 按住 Alt 斜着拖松手后 —— 若真的框出了矩形，就把模式带上。
  *
- * `mousemove` / `mouseup` 挂在 window 上而不是编辑器上：拖到编辑器外面松手也
- * 要能收尾，否则会一直卡在「还在拖」的状态里。
+ * 矩形本身是 `rectangularSelection()` 画的，这里**一律 `return false` 放行**，什么
+ * 都不接管。挂在 `mouseup` 而不是 `mousedown` 是有原因的：按下那一刻就 dispatch
+ * 会把 CodeMirror 刚起步的鼠标拖动打断（实测矩形直接没了），所以等到松手再补状态。
  *
- * 拖起来就自动进入模式：既然已经框了矩形，接着多半要用方向键微调或者删除整块。
+ * 进模式的条件是「选区确实有多个 range」—— 光按着 Alt 点一下（不算拖动）不该
+ * 进模式。EmEditor 里 Alt+拖动也是随时可用、不必先进模式，这里保持同样习惯。
  */
-function verticalDragExt() {
+function altDragEnterExt() {
   return EditorView.domEventHandlers({
-    mousedown(event, view) {
-      if (event.button !== 0 || !event.altKey || !event.shiftKey) return false;
-      event.preventDefault();
-      const anchor = posToCell(view, event.clientX, event.clientY);
-      view.dispatch({ effects: setColumnMode.of(true) });
-
-      const onMove = (moveEvent: MouseEvent) => {
-        const cell = posToCell(view, moveEvent.clientX, moveEvent.clientY);
-        applyRect(view, {
-          startLine: Math.min(anchor.line, cell.line),
-          endLine: Math.max(anchor.line, cell.line),
-          colStart: Math.min(anchor.col, cell.col),
-          colEnd: Math.max(anchor.col, cell.col),
+    mouseup(event, view) {
+      if (event.button !== 0 || !event.altKey || event.shiftKey) return false;
+      if (view.state.selection.ranges.length > 1) {
+        // 矩形必须**同时**记进 vRectField：updateListener 里那条反推是靠
+        // selection 变化驱动的，而这里是松手后才开模式，选区此刻不再变化，
+        // 反推不会被触发 —— 留着 null 的话后续 Ctrl+→ 微调会直接失灵。
+        view.dispatch({
+          effects: [setColumnMode.of(true), setVRect.of(selectionToRect(view))],
         });
-      };
-      const onUp = () => {
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
-        view.focus();
-      };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
-      applyRect(view, {
-        startLine: anchor.line,
-        endLine: anchor.line,
-        colStart: anchor.col,
-        colEnd: anchor.col,
-      });
-      return true;
+      }
+      return false;
     },
   });
 }
@@ -982,41 +993,46 @@ export function Editor({
             },
           ]),
         ),
-        // 垂直选择模式的四个方向键。同样要最高优先级，否则 Ctrl+Shift+↑/↓ 这类
-        // 组合会落到系统 / 浏览器手里。仅在模式内接管（返回 false 就放行）
-        // ——模式外这四个键保持它们原本的含义。
+        // 垂直选择（列编辑）模式内的四个微调键：`Ctrl+← / →` 增减一个字符、
+        // `Ctrl+↑ / ↓` 增减一行。
+        //
+        // 必须最高优先级且在模式内才接管：不在模式里时 `Ctrl+← / →` 仍是 CodeMirror
+        // 默认的「按词移动光标」，不该被抢走（返回 false 就是放行）。
         Prec.highest(
           keymap.of([
             {
-              key: 'Alt-Ctrl-ArrowRight',
+              key: 'Ctrl-ArrowRight',
               run: (v) => (v.state.field(columnModeField, false) ? expandColumn(v, 1) : false),
             },
             {
-              key: 'Alt-Ctrl-ArrowLeft',
+              key: 'Ctrl-ArrowLeft',
               run: (v) => (v.state.field(columnModeField, false) ? expandColumn(v, -1) : false),
             },
             {
-              key: 'Ctrl-Shift-ArrowUp',
+              key: 'Ctrl-ArrowUp',
               run: (v) => (v.state.field(columnModeField, false) ? expandRow(v, true) : false),
             },
             {
-              key: 'Ctrl-Shift-ArrowDown',
+              key: 'Ctrl-ArrowDown',
               run: (v) => (v.state.field(columnModeField, false) ? expandRow(v, false) : false),
             },
           ]),
         ),
-        // 垂直选择（列编辑）：自己接管 Alt+Shift 斜拖框选（理由见 `verticalDragExt`）。
-        // drawSelection 是必需的——矩形选区是**多光标**，多光标必须自绘，浏览器
-        // 原生选区只支持一个范围（实测没加之前多选区一个都画不出来）。
-        verticalDragExt(),
+        // 垂直选择（列编辑）：Alt+拖动 框出矩形是 CodeMirror 原生能力，直接启用；
+        // altDragEnterExt 只在按下时把模式带上，好让菜单勾选与状态栏跟着亮。
+        rectangularSelection(),
+        altDragEnterExt(),
+        // drawSelection 是原生矩形拖选的前提——矩形选区是**多光标**，多光标必须
+        // 自绘，浏览器原生选区只支持一个范围（实测没加之前一个都画不出来）。
+        drawSelection(),
         // **多选区必须显式开**：@codemirror/state 6.7.6 里这个 facet 的 combine 是
         // `values.some(v => v)`，没有任何 extension 提供它时结果是 false —— 于是每
         // 一个 transaction 都执行 `selection.asSingle()`，多出来的 range 全被丢掉。
         // 这一个开关同时解释了三件事：CodeMirror 自带的矩形拖选不生效、
         // Ctrl+Alt+↓ 加光标不生效、以及本功能的「状态栏显示 3 行、实际只有 1 个
-        // range」—— 不是有人在拦多选区，是没人去开它。
+        // range」—— 不是有人在拦多选区，是没人去开它。**没有它，上面那三个原生
+        // 扩展（rectangularSelection / drawSelection）都是白装的。**
         EditorState.allowMultipleSelections.of(true),
-        drawSelection(),
         columnModeField,
         vRectField,
         highlightField,
@@ -1040,6 +1056,19 @@ export function Editor({
             const line = update.state.doc.lineAt(sel.head);
             const column = Array.from(line.text.slice(0, sel.head - line.from)).length + 1;
             onCursorChange(id, line.number, column);
+          }
+          // 接纳 **Alt+拖动** 产生的矩形：那条路直接改 selection，不经过 applyRect，
+          // vRectField 会停在旧值。认的办法是看有没有本模块的 annotation。
+          // 只同步 effects、不动 selection，所以不会来回触发自己。
+          // 注：Transaction 没有 `selectionSet`，要看 `selection` 是否被带上
+          const externalRect = update.transactions.some(
+            (tr) => tr.annotation(fromApplyRectAnn) !== true && tr.selection !== undefined,
+          );
+          if (externalRect && update.state.field(columnModeField, false)) {
+            const derived = selectionToRect(update.view);
+            if (derived !== null) {
+              update.view.dispatch({ effects: setVRect.of(derived) });
+            }
           }
           // 垂直选择：模式开关与矩形尺寸变了就同步给外层（菜单勾选 / 状态栏）
           const prevRect = update.startState.field(vRectField);

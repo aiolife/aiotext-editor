@@ -350,7 +350,7 @@ export function MenuBar({
         'edit.column',
         '列编辑（垂直选择）',
         columnMode,
-        'Ctrl+Shift+F8 进入 / 退出垂直选择模式。模式内：Alt+Ctrl+← / → 左右增减一个字符，Ctrl+Shift+↑ / ↓ 上下增减一行；也可以直接按住 Alt+Shift 斜着拖出矩形。进入时会自动关掉自动换行，退出时还原。',
+        'Ctrl+Shift+F8 进入 / 退出垂直选择模式。按住 Alt 斜着拖鼠标可直接框出矩形（不必先进模式）；模式内 Ctrl+← / → 左右增减一个字符，Ctrl+↑ / ↓ 上下增减一行。进入时会自动关掉自动换行，退出时还原。',
       )}
       {submenuItem(
         'edit-swap-line',
