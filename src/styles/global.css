@@ -94,6 +94,16 @@ body,
   color: #ef6c00;
 }
 
+/* 垂直选择（列编辑）模式的指示：进入模式后常驻。
+   用一块淡黄底区别于周围灰字——多光标状态下敲字会写到每一行，
+   需要一眼看出「现在不是普通编辑」。 */
+.statusbar-column {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: rgba(255, 214, 0, 0.22);
+  color: #7a5c00;
+}
+
 /* ---------- 多标签栏 ---------- */
 
 .tabbar {

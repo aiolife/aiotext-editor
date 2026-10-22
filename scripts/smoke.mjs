@@ -810,10 +810,11 @@ try {
     );
 
     check(
+      // v0.11：撤销 / 重做也显示默认键位了（`displayKey` 只显示、不参与分发），
+      // 所以三项的文本都带键位后缀，比对时按前缀算
       '编辑菜单头部：撤销 / 重做 / 跳转',
-      novitates?.editHead?.[0] === '撤销' &&
-        novitates?.editHead?.[1] === '重做' &&
-        // 「跳转…」带 Ctrl+G 提示，两个 span 在一个 textContent 里
+      (novitates?.editHead?.[0] ?? '').startsWith('撤销') &&
+        (novitates?.editHead?.[1] ?? '').startsWith('重做') &&
         (novitates?.editHead?.[2] ?? '').startsWith('跳转'),
       (novitates?.editHead ?? []).join(' / '),
     );

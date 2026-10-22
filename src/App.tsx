@@ -280,6 +280,29 @@ export default function App() {
     null,
   );
   /**
+   * 垂直选择（列编辑）模式是否开着 —— 菜单勾选与状态栏都读它。
+   *
+   * 既有 state 也有 ref：state 给渲染用，ref 给命令处理函数用。命令表是
+   * `useMemo` 出来的，把 `columnMode` 列进依赖会让整张表随模式重建，不值当。
+   */
+  const [columnMode, setColumnMode] = useState(false);
+  const columnModeRef = useRef(false);
+  columnModeRef.current = columnMode;
+  /** 模式里当前矩形的行列数（由编辑器同步上来，给状态栏显示） */
+  const [columnRect, setColumnRect] = useState<{ rows: number; cols: number } | null>(null);
+  /** 进入模式前的自动换行状态：进入时强制关掉，退出时按它还原 */
+  const wrapBeforeColumnRef = useRef<boolean | null>(null);
+
+  /** 编辑器 → App：垂直选择的状态同步（拖框也能进模式，所以由它说了算） */
+  const handleVerticalState = useCallback(
+    (state: { on: boolean; rows: number; cols: number }) => {
+      columnModeRef.current = state.on;
+      setColumnMode(state.on);
+      setColumnRect(state.on ? { rows: state.rows, cols: state.cols } : null);
+    },
+    [],
+  );
+  /**
    * 最近这一次选区变更是不是「程序跳过去」造成的（查找下一个 / 跳差异）。
    *
    * 查找面板据此决定要不要把选中的文字回填进输入框 —— 若不分来源，
@@ -346,6 +369,14 @@ export default function App() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const reloadTab = tabs.find((t) => t.id === reloadTabId) ?? null;
+
+  /** 没有活动标签时（标签全关了 / 进了比较模式）模式要一并退掉，别留个空勾选 */
+  useEffect(() => {
+    if (!activeTab) {
+      setColumnMode(false);
+      setColumnRect(null);
+    }
+  }, [activeTab]);
 
   /** 当前标签的有效选区（from === to 视为无选区） */
   const selectionRange = useMemo(
@@ -814,7 +845,8 @@ export default function App() {
         | 'undo'
         | 'redo'
         | 'goto'
-        | 'column'
+        | 'columnOn'
+        | 'columnOff'
         | 'lineUp'
         | 'lineDown'
         | 'swapLineUp'
@@ -1356,8 +1388,33 @@ export default function App() {
       'edit.undo': { run: () => sendEditorCommand('undo'), enabled: () => activeTab !== null },
       'edit.redo': { run: () => sendEditorCommand('redo'), enabled: () => activeTab !== null },
       'edit.goto': { run: () => setGotoOpen(true), enabled: () => activeTab !== null },
-      // 列编辑（垂直选择）：把当前选区转成矩形选区；矩形框选本身是 Alt+拖动
-      'edit.column': { run: () => sendEditorCommand('column'), enabled: () => activeTab !== null },
+      // 垂直选择（列编辑）模式：Ctrl+Shift+F8 进出。
+      //
+      // 进入时必须关掉自动换行：一旦换行，「第几列」就没有稳定含义了（同一行在
+      // 不同窗口宽度下折成几行，列号飘忽），框出来的矩形会对不上显示。
+      // 退出时按进入前的状态还原——原本没开换行就还是不换行，不替用户做主。
+      'edit.column': {
+        run: () => {
+          // 现取而不是闭包里的 editorSettings：躲开 stale closure，也不必进依赖数组
+          const editor = useSettingsStore.getState().settings.editor;
+          const next = !columnModeRef.current;
+          if (next) {
+            wrapBeforeColumnRef.current = editor.wrap;
+            if (editor.wrap) updateSettings({ editor: { ...editor, wrap: false } });
+          } else {
+            const previous = wrapBeforeColumnRef.current;
+            wrapBeforeColumnRef.current = null;
+            if (previous !== null && previous !== editor.wrap) {
+              updateSettings({ editor: { ...editor, wrap: previous } });
+            }
+          }
+          columnModeRef.current = next;
+          setColumnMode(next);
+          setColumnRect(null);
+          sendEditorCommand(next ? 'columnOn' : 'columnOff');
+        },
+        enabled: () => activeTab !== null,
+      },
       // 行互换：上移 / 下移与键盘 Alt+↑ / Alt+↓ 是同一套 CodeMirror 命令，
       // 只是菜单没有键盘入口，故从这里发意图
       'edit.moveLineUp': {
@@ -1533,6 +1590,7 @@ export default function App() {
           <MenuBar
             appearance={appearance}
             wrap={editorSettings.wrap}
+            columnMode={columnMode}
             bindings={bindings}
             handlers={handlers}
             compareDisabled={busy || !activeTab || tabs.length < 2 || compare !== null}
@@ -1656,6 +1714,7 @@ export default function App() {
             onContentChange={setContent}
             onCursorChange={setCursor}
             onSelectionChange={handleSelectionChange}
+            onVerticalState={handleVerticalState}
             pendingEdit={pendingEdit}
             pendingSelection={pendingSelection}
             commandRequest={editorCommand}
@@ -1684,7 +1743,9 @@ export default function App() {
       </main>
 
       {/* F-11：状态栏可整体隐藏（设置 → 外观，或快捷键「显示 / 隐藏状态栏」） */}
-      {appearance.showStatusBar ? <StatusBar tab={activeTab} /> : null}
+      {appearance.showStatusBar ? (
+        <StatusBar tab={activeTab} columnRect={columnMode ? columnRect : null} />
+      ) : null}
 
       {/* 对话框按需加载的边界：`fallback={null}` 是因为它们本来就是条件渲染的，
           取 chunk 的那几十毫秒里什么都不画，比画一个空框更干净 */}

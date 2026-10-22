@@ -26,7 +26,6 @@ import {
   drawSelection,
   keymap,
   lineNumbers,
-  rectangularSelection,
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view';
@@ -82,8 +81,9 @@ export interface EditorCommand {
     | 'undo'
     | 'redo'
     | 'goto'
-    // 列编辑（垂直选择）：把当前普通选区转成矩形选区
-    | 'column'
+    // 垂直选择（列编辑）模式：进 / 出
+    | 'columnOn'
+    | 'columnOff'
     // 行互换（上移 / 下移走 CodeMirror 的 moveLineUp / moveLineDown）
     | 'lineUp'
     | 'lineDown'
@@ -105,6 +105,14 @@ interface EditorProps {
    * 不是用户自己框出来的。
    */
   onSelectionChange: (id: string, from: number, to: number, external?: boolean) => void;
+  /**
+   * 垂直选择（列编辑）的状态： `on` 是模式是否开启，`rows` / `cols` 是当前矩形
+   * 的行数与列数。
+   *
+   * 拖框是在编辑器内部处理的（躲开走不通的 `rectangularSelection`），外层看不见
+   * 过程，所以变一次同步一次给状态栏和菜单勾选。
+   */
+  onVerticalState?: (state: { on: boolean; rows: number; cols: number }) => void;
   /** 待应用的外部替换（按 nonce 触发一次） */
   pendingEdit?: PendingEdit | null;
   /** 待应用的外部选区（按 nonce 触发一次） */
@@ -351,28 +359,152 @@ function updateTimestamp(view: EditorView): void {
 }
 
 /**
- * 把当前普通选区转成矩形（列）选区：每行一段、列范围相同。
+ * 垂直选择（列编辑）模式的核心。
  *
- * 转换完就能直接输入，每行都插同样的内容。单行选区没有「列」可言，故不动。
+ * **为什么不用 CodeMirror 自带的 `rectangularSelection()`**：用户实测按住 Alt
+ * 斜着拖框不出矩形，本机自动化同样测不出多光标；但代码侧查遍了——没有
+ * `allowMultipleSelections` 设置、没有 transaction filter 规整选区、updateListener
+ * 也只上报不回写——找不到任何拦截多选区的东西。与其继续猜，不如自己接管：用
+ * 公开的 `posAtCoords` 算行列、自己拼多行 range，行为完全可控。
+ *
+ * 矩形内部用「起始行 / 结束行 / 起始列 / 结束列」四个数表示，而不是存一堆
+ * selected range：扩展与收窄都是在这四个数上做加减，来回换算会丢信息。
+ * `colEnd === colStart` 表示**零宽**——即多行同一个列的多个光标（还没选中内容）。
  */
-function toRectangular(view: EditorView): void {
-  const { state } = view;
-  const range = state.selection.main;
-  if (range.empty) return;
-  const doc = state.doc;
-  const first = doc.lineAt(range.from);
-  const last = doc.lineAt(range.to);
-  if (first.number === last.number) return;
-  const colStart = range.from - first.from;
-  const colEnd = Math.max(range.to - last.from, colStart);
+interface VRect {
+  startLine: number;
+  endLine: number;
+  colStart: number;
+  colEnd: number;
+}
+
+const setColumnMode = StateEffect.define<boolean>();
+const setVRect = StateEffect.define<VRect | null>();
+
+const columnModeField = StateField.define<boolean>({
+  create: () => false,
+  update(value, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setColumnMode)) return effect.value;
+    return value;
+  },
+});
+
+const vRectField = StateField.define<VRect | null>({
+  create: () => null,
+  update(value, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setVRect)) return effect.value;
+    return value;
+  },
+});
+
+/** 屏幕坐标 → 行列。`posAtCoords` 会贴到最近的位置，行尾以外按行尾算 */
+function posToCell(view: EditorView, x: number, y: number): { line: number; col: number } {
+  const pos = view.posAtCoords({ x, y }, false);
+  const line = view.state.doc.lineAt(pos);
+  return { line: line.number, col: pos - line.from };
+}
+
+/** 矩形 → 多行选区；越界的行列在这里夹回文档范围内 */
+function rectToSelection(view: EditorView, rect: VRect): EditorSelection {
+  const maxLine = view.state.doc.lines;
+  const startLine = Math.max(1, Math.min(rect.startLine, maxLine));
+  const endLine = Math.max(startLine, Math.min(rect.endLine, maxLine));
   const ranges = [];
-  for (let n = first.number; n <= last.number; n += 1) {
-    const line = doc.line(n);
-    const from = Math.min(line.from + colStart, line.to);
-    const to = Math.min(line.from + colEnd, line.to);
+  for (let n = startLine; n <= endLine; n += 1) {
+    const line = view.state.doc.line(n);
+    const from = line.from + Math.min(rect.colStart, line.length);
+    const to = line.from + Math.min(Math.max(rect.colEnd, rect.colStart), line.length);
     ranges.push(EditorSelection.range(from, Math.max(from, to)));
   }
-  view.dispatch({ selection: EditorSelection.create(ranges), scrollIntoView: true });
+  return EditorSelection.create(ranges);
+}
+
+/** 落下矩形：同时更新状态与选区。传 null 表示清掉垂直选区 */
+function applyRect(view: EditorView, rect: VRect | null): void {
+  view.dispatch({
+    effects: setVRect.of(rect),
+    selection: rect ? rectToSelection(view, rect) : { anchor: view.state.selection.main.head },
+    scrollIntoView: rect !== null,
+  });
+  view.focus();
+}
+
+/** 进入模式：在光标处放一个零宽矩形（多行同一列的多个光标） */
+function enterColumnMode(view: EditorView): void {
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  const col = head - line.from;
+  view.dispatch({ effects: setColumnMode.of(true) });
+  applyRect(view, { startLine: line.number, endLine: line.number, colStart: col, colEnd: col });
+}
+
+/** 退出模式：清掉矩形，选区收回单个光标 */
+function exitColumnMode(view: EditorView): void {
+  view.dispatch({ effects: [setColumnMode.of(false), setVRect.of(null)] });
+  applyRect(view, null);
+}
+
+/** 横向扩展：`delta` 为 +1 向右扩一个字符、-1 向左收一个字符 */
+function expandColumn(view: EditorView, delta: number): boolean {
+  const rect = view.state.field(vRectField, false);
+  if (!rect) return false;
+  applyRect(view, { ...rect, colEnd: Math.max(rect.colStart, rect.colEnd + delta) });
+  return true;
+}
+
+/** 纵向扩展：向上加上一行 / 向下加下一行 */
+function expandRow(view: EditorView, upward: boolean): boolean {
+  const rect = view.state.field(vRectField, false);
+  if (!rect) return false;
+  const maxLine = view.state.doc.lines;
+  const next = upward
+    ? { ...rect, startLine: Math.max(1, rect.startLine - 1) }
+    : { ...rect, endLine: Math.min(maxLine, rect.endLine + 1) };
+  applyRect(view, next);
+  return true;
+}
+
+/**
+ * Alt+Shift 斜着拖 —— 框出矩形。
+ *
+ * `mousemove` / `mouseup` 挂在 window 上而不是编辑器上：拖到编辑器外面松手也
+ * 要能收尾，否则会一直卡在「还在拖」的状态里。
+ *
+ * 拖起来就自动进入模式：既然已经框了矩形，接着多半要用方向键微调或者删除整块。
+ */
+function verticalDragExt() {
+  return EditorView.domEventHandlers({
+    mousedown(event, view) {
+      if (event.button !== 0 || !event.altKey || !event.shiftKey) return false;
+      event.preventDefault();
+      const anchor = posToCell(view, event.clientX, event.clientY);
+      view.dispatch({ effects: setColumnMode.of(true) });
+
+      const onMove = (moveEvent: MouseEvent) => {
+        const cell = posToCell(view, moveEvent.clientX, moveEvent.clientY);
+        applyRect(view, {
+          startLine: Math.min(anchor.line, cell.line),
+          endLine: Math.max(anchor.line, cell.line),
+          colStart: Math.min(anchor.col, cell.col),
+          colEnd: Math.max(anchor.col, cell.col),
+        });
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        view.focus();
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      applyRect(view, {
+        startLine: anchor.line,
+        endLine: anchor.line,
+        colStart: anchor.col,
+        colEnd: anchor.col,
+      });
+      return true;
+    },
+  });
 }
 
 /**
@@ -533,6 +665,7 @@ export function Editor({
   onContentChange,
   onCursorChange,
   onSelectionChange,
+  onVerticalState,
   pendingEdit,
   pendingSelection,
   highlights,
@@ -768,9 +901,12 @@ export function Editor({
       view.focus();
       return;
     }
-    if (commandRequest.kind === 'column') {
-      toRectangular(view);
-      view.focus();
+    if (commandRequest.kind === 'columnOn') {
+      enterColumnMode(view);
+      return;
+    }
+    if (commandRequest.kind === 'columnOff') {
+      exitColumnMode(view);
       return;
     }
     if (commandRequest.kind === 'insertTime') {
@@ -846,11 +982,43 @@ export function Editor({
             },
           ]),
         ),
-        // 列编辑（垂直选择）：Alt+拖动 框选矩形。矩形选区是**多光标**，
-        // 而多光标必须靠 drawSelection 自绘——浏览器原生选区只支持一个范围，
-        // 没有它的话多选区根本画不出来（实测选中后选区块数为 0）。
-        rectangularSelection(),
+        // 垂直选择模式的四个方向键。同样要最高优先级，否则 Ctrl+Shift+↑/↓ 这类
+        // 组合会落到系统 / 浏览器手里。仅在模式内接管（返回 false 就放行）
+        // ——模式外这四个键保持它们原本的含义。
+        Prec.highest(
+          keymap.of([
+            {
+              key: 'Alt-Ctrl-ArrowRight',
+              run: (v) => (v.state.field(columnModeField, false) ? expandColumn(v, 1) : false),
+            },
+            {
+              key: 'Alt-Ctrl-ArrowLeft',
+              run: (v) => (v.state.field(columnModeField, false) ? expandColumn(v, -1) : false),
+            },
+            {
+              key: 'Ctrl-Shift-ArrowUp',
+              run: (v) => (v.state.field(columnModeField, false) ? expandRow(v, true) : false),
+            },
+            {
+              key: 'Ctrl-Shift-ArrowDown',
+              run: (v) => (v.state.field(columnModeField, false) ? expandRow(v, false) : false),
+            },
+          ]),
+        ),
+        // 垂直选择（列编辑）：自己接管 Alt+Shift 斜拖框选（理由见 `verticalDragExt`）。
+        // drawSelection 是必需的——矩形选区是**多光标**，多光标必须自绘，浏览器
+        // 原生选区只支持一个范围（实测没加之前多选区一个都画不出来）。
+        verticalDragExt(),
+        // **多选区必须显式开**：@codemirror/state 6.7.6 里这个 facet 的 combine 是
+        // `values.some(v => v)`，没有任何 extension 提供它时结果是 false —— 于是每
+        // 一个 transaction 都执行 `selection.asSingle()`，多出来的 range 全被丢掉。
+        // 这一个开关同时解释了三件事：CodeMirror 自带的矩形拖选不生效、
+        // Ctrl+Alt+↓ 加光标不生效、以及本功能的「状态栏显示 3 行、实际只有 1 个
+        // range」—— 不是有人在拦多选区，是没人去开它。
+        EditorState.allowMultipleSelections.of(true),
         drawSelection(),
+        columnModeField,
+        vRectField,
         highlightField,
         diffMarkField,
         pairMarkField,
@@ -872,6 +1040,18 @@ export function Editor({
             const line = update.state.doc.lineAt(sel.head);
             const column = Array.from(line.text.slice(0, sel.head - line.from)).length + 1;
             onCursorChange(id, line.number, column);
+          }
+          // 垂直选择：模式开关与矩形尺寸变了就同步给外层（菜单勾选 / 状态栏）
+          const prevRect = update.startState.field(vRectField);
+          const nextRect = update.state.field(vRectField);
+          const prevMode = update.startState.field(columnModeField);
+          const nextMode = update.state.field(columnModeField);
+          if (prevRect !== nextRect || prevMode !== nextMode) {
+            onVerticalState?.({
+              on: nextMode,
+              rows: nextRect ? nextRect.endLine - nextRect.startLine + 1 : 0,
+              cols: nextRect ? nextRect.colEnd - nextRect.colStart : 0,
+            });
           }
         }),
       ],

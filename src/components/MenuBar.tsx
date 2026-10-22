@@ -39,6 +39,8 @@ export interface MenuBarProps {
   appearance: AppearanceSettings;
   /** 自动换行的当前勾选态（在「编辑器」设置分组下，F-11） */
   wrap: boolean;
+  /** 垂直选择（列编辑）模式是否开着 —— 影响菜单项的勾选态 */
+  columnMode: boolean;
   directions: OpenccDirectionMeta[];
   tools: ToolMeta[];
   /** 用户替换表清单（「编辑 → 自定义替换 ▸」的二级菜单项） */
@@ -86,6 +88,7 @@ export function MenuBar({
   bindings,
   appearance,
   wrap,
+  columnMode,
   directions,
   tools,
   tables,
@@ -157,8 +160,8 @@ export function MenuBar({
     );
   };
 
-  /** 勾选型命令（菜单栏 / 状态栏 / 行号） */
-  const checkItem = (id: string, label: string, checked: boolean) => {
+  /** 勾选型命令（菜单栏 / 状态栏 / 行号）；`hint` 是鼠标悬停时的用法说明 */
+  const checkItem = (id: string, label: string, checked: boolean, hint?: string) => {
     const handler = handlers[id];
     return (
       <button
@@ -168,6 +171,7 @@ export function MenuBar({
         aria-checked={checked}
         className="menu-item menu-item-row"
         disabled={handler === undefined || !enabledOf(id)}
+        title={hint}
         onClick={() => fire(() => handler?.run())}
       >
         <span className="menu-item-check" aria-hidden="true">
@@ -342,10 +346,11 @@ export function MenuBar({
       )}
       {plainItem('convert-tables', '替换表管理…', !convertDisabled, actions.tables)}
       <div className="menu-sep" />
-      {commandItem(
+      {checkItem(
         'edit.column',
-        undefined,
-        'Alt+拖动 直接框选矩形；或先选中一块区域，再点此项把它转成列（矩形）选区',
+        '列编辑（垂直选择）',
+        columnMode,
+        'Ctrl+Shift+F8 进入 / 退出垂直选择模式。模式内：Alt+Ctrl+← / → 左右增减一个字符，Ctrl+Shift+↑ / ↓ 上下增减一行；也可以直接按住 Alt+Shift 斜着拖出矩形。进入时会自动关掉自动换行，退出时还原。',
       )}
       {submenuItem(
         'edit-swap-line',

@@ -10,6 +10,8 @@ import { countTextStats, type TextStats } from '../shared/textStats';
 
 interface StatusBarProps {
   tab: EditorTab | null;
+  /** 垂直选择（列编辑）当前矩形；不在模式里为 null */
+  columnRect: { rows: number; cols: number } | null;
 }
 
 /**
@@ -30,7 +32,7 @@ function useFullTextStats(content: string): TextStats {
   );
 }
 
-export function StatusBar({ tab }: StatusBarProps) {
+export function StatusBar({ tab, columnRect }: StatusBarProps) {
   // hook 不能放在下面的提前 return 之后，所以先按可能为空的内容取出来
   const stats = useFullTextStats(tab?.content ?? '');
   if (!tab) {
@@ -49,6 +51,11 @@ export function StatusBar({ tab }: StatusBarProps) {
       <span>
         行 {tab.cursorLine}，列 {tab.cursorColumn}
       </span>
+      {columnRect && (
+        <span className="statusbar-column" title="垂直选择（列编辑）模式，Ctrl+Shift+F8 退出">
+          垂直选择 {columnRect.rows} 行 × {columnRect.cols} 列
+        </span>
+      )}
       <span
         className="statusbar-right"
         title={`汉字 ${stats.chineseChars} · 单词 ${stats.words} · ${stats.bytes} 字节（UTF-8）`}

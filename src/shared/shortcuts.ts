@@ -128,9 +128,10 @@ export const COMMANDS: readonly CommandMeta[] = [
     displayKey: IS_MAC ? 'shift+meta+z' : mod('y'),
   },
   { id: 'edit.goto', label: '跳转…', group: '编辑', defaultKey: mod('g') },
-  // 列编辑（垂直选择）：矩形选区能力由 CodeMirror 的 `rectangularSelection`
-  // 提供（Alt+拖动）；菜单项负责把已有的普通选区转成矩形选区。
-  { id: 'edit.column', label: '列编辑（垂直选择）', group: '编辑', defaultKey: null },
+  // 垂直选择（列编辑）模式：开关用 Ctrl+Shift+F8（与 EmEditor 同款）。模式内那
+  // 四个方向微调键不占这张表——它们在编辑器里实现，因为只有那儿才知道当前有没有
+  // 焦点、该不该放行按键。
+  { id: 'edit.column', label: '列编辑（垂直选择）', group: '编辑', defaultKey: 'ctrl+shift+f8' },
   // 行互换：Alt-↑ / Alt-↓ 由 defaultKeymap 的 moveLineUp / moveLineDown 处理，
   // 同样只显示键位；「与上一行交换」是本应用新增的，故真的参与分发。
   { id: 'edit.moveLineUp', label: '行上移', group: '编辑', defaultKey: null, displayKey: 'alt+up' },
