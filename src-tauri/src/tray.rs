@@ -24,6 +24,8 @@ use tauri::{
     AppHandle, Manager,
 };
 
+use crate::core::ui_lang;
+
 /// 托盘 id（全局只有一个主托盘）
 const TRAY_ID: &str = "main";
 
@@ -38,8 +40,16 @@ pub struct TrayHandle(pub Mutex<Option<TrayIcon>>);
 ///
 /// 失败只记日志不阻断启动：托盘是这个开关的配套，主流程不该被它拖垮。
 pub fn build(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItemBuilder::with_id("show", "显示主窗口").build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", "退出").build(app)?;
+    // 菜单项走一遍语言：托盘是 Rust 侧建的**原生**菜单，前端 DOM 够不到，
+    // 所以和其他后端文本一样由 ui_lang 负责（PRD L-5，重启后生效）。
+    //
+    // 立刻重建也能做（暴露一个 command 让前端切语言时调），但那会让托盘成为
+    // 唯一「不重启就变」的后端文本，与错误提示、工具目录的行为不一致，故不做。
+    //
+    // 注：「退出」繁簡同形，s2twp 转出来还是「退出」——不按台湾习惯改成「結束」，
+    // 与「批處理」等词一样，接受 OpenCC 原样输出（见 PRD §3.6 落地口径）。
+    let show = MenuItemBuilder::with_id("show", ui_lang::t("显示主窗口")).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", ui_lang::t("退出")).build(app)?;
     let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
