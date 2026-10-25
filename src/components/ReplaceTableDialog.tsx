@@ -24,6 +24,10 @@ import {
   type TableMeta,
 } from '../platform/tauriApi';
 import { TableSourceEditor } from './TableSourceEditor';
+import { useI18n } from '../shared/i18n';
+import { REPLACE_RULES, REPLACE_TABLE } from '../shared/i18n/replace';
+import { COMMON } from '../shared/i18n/common';
+import { fill } from '../shared/i18n/status';
 
 interface ReplaceTableDialogProps {
   onClose: () => void;
@@ -83,6 +87,7 @@ export function ReplaceTableDialog({
   activeContent,
   onApplyText,
 }: ReplaceTableDialogProps) {
+  const { t } = useI18n();
   const [tables, setTables] = useState<TableMeta[]>([]);
   const [selected, setSelected] = useState<TableMeta | null>(null);
   const [text, setText] = useState(NEW_TABLE_TEMPLATE);
@@ -109,12 +114,12 @@ export function ReplaceTableDialog({
   // 实时校验（防抖 250ms）
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      parseReplaceTableText(text, selected?.name ?? '新表')
+      parseReplaceTableText(text, selected?.name ?? t(REPLACE_TABLE.newTableName))
         .then(setParsed)
         .catch((e) => setError(String(e)));
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [text, selected]);
+  }, [text, selected, t]);
 
   const openTable = useCallback(
     async (meta: TableMeta) => {
@@ -151,21 +156,24 @@ export function ReplaceTableDialog({
       setSelected(null);
       setText(renderTableText(imported));
       setDirty(true);
-      onNotice(`已导入 ${imported.entries.length} 条，确认后点「保存」入库`);
+      onNotice(fill(t(REPLACE_TABLE.imported), { count: imported.entries.length }));
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, [onNotice]);
+  }, [onNotice, t]);
 
   const handleSave = useCallback(
     async (asCopy: boolean) => {
-      const current = parsed?.table.name ?? selected?.name ?? '新表';
+      const current = parsed?.table.name ?? selected?.name ?? t(REPLACE_TABLE.newTableName);
       let name = current;
       let nextText = text;
       if (asCopy) {
-        const input = window.prompt('另存为新表名', `${current} 副本`);
+        const input = window.prompt(
+          t(REPLACE_TABLE.promptName),
+          fill(t(REPLACE_TABLE.copySuffix), { name: current }),
+        );
         if (!input) return;
         name = input.trim();
         // 改写 `#name:`（没有该行则插到最前），保证文件名与显示名一致
@@ -186,19 +194,19 @@ export function ReplaceTableDialog({
         setDirty(false);
         await refresh();
         setSelected(meta);
-        onNotice(`已保存「${meta.name}」（${meta.entryCount} 条）`);
+        onNotice(fill(t(REPLACE_TABLE.saved), { name: meta.name, count: meta.entryCount }));
       } catch (e) {
         setError(String(e));
       } finally {
         setBusy(false);
       }
     },
-    [onNotice, parsed, refresh, selected, text],
+    [onNotice, parsed, refresh, selected, t, text],
   );
 
   const handleDelete = useCallback(async () => {
     if (!selected) return;
-    if (!window.confirm(`删除替换表「${selected.name}」？此操作不可撤销。`)) return;
+    if (!window.confirm(fill(t(REPLACE_TABLE.confirmDelete), { name: selected.name }))) return;
     setBusy(true);
     setError(null);
     try {
@@ -207,13 +215,13 @@ export function ReplaceTableDialog({
       setSelected(null);
       setText(NEW_TABLE_TEMPLATE);
       setDirty(false);
-      onNotice(`已删除「${selected.name}」`);
+      onNotice(fill(t(REPLACE_TABLE.deleted), { name: selected.name }));
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, [onNotice, refresh, selected]);
+  }, [onNotice, refresh, selected, t]);
 
   /** F-04 模式 A：用独立引擎（Aho-Corasick）把当前表应用到正文 */
   const handleApplyToDocument = useCallback(async () => {
@@ -223,22 +231,29 @@ export function ReplaceTableDialog({
     try {
       const report = await applyReplace(activeContent, parsed.table, { mode: 'standalone' });
       if (report.changedCount === 0) {
-        onNotice(`「${parsed.table.name}」在正文中没有命中`);
+        onNotice(fill(t(REPLACE_TABLE.noHit), { name: parsed.table.name }));
         return;
       }
       onApplyText(report.text);
+      // 词条原文是用户数据，只拼接不翻译
       const top = Object.entries(report.perEntryCount)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
         .map(([word, count]) => `${word}×${count}`)
         .join('、');
-      onNotice(`已应用「${parsed.table.name}」：${report.changedCount} 处（${top}）`);
+      onNotice(
+        fill(t(REPLACE_TABLE.applied), {
+          name: parsed.table.name,
+          count: report.changedCount,
+          top,
+        }),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, [activeContent, onApplyText, onNotice, parsed]);
+  }, [activeContent, onApplyText, onNotice, parsed, t]);
 
   const errorLines = useMemo(
     () =>
@@ -262,11 +277,13 @@ export function ReplaceTableDialog({
   return (
     <div className="dialog-overlay">
       <div className="dialog dialog-table" role="dialog" aria-modal="true">
-        <h3 className="dialog-title">替换表管理</h3>
+        <h3 className="dialog-title">{t(REPLACE_TABLE.title)}</h3>
 
         <div className="table-dialog-body">
           <aside className="table-list">
-            <div className="menu-group-title">用户表（{userTables.length}）</div>
+            <div className="menu-group-title">
+              {fill(t(REPLACE_TABLE.userTables), { count: userTables.length })}
+            </div>
             {userTables.map((meta) => (
               <button
                 key={meta.path}
@@ -275,12 +292,18 @@ export function ReplaceTableDialog({
                 onClick={() => void openTable(meta)}
               >
                 <span className="table-item-name">{meta.name}</span>
-                <span className="table-item-count">{meta.entryCount} 条</span>
+                <span className="table-item-count">
+                  {fill(t(REPLACE_TABLE.entryCount), { count: meta.entryCount })}
+                </span>
               </button>
             ))}
-            {userTables.length === 0 && <div className="dialog-hint">暂无用户表</div>}
+            {userTables.length === 0 && (
+              <div className="dialog-hint">{t(REPLACE_TABLE.noUserTable)}</div>
+            )}
 
-            <div className="menu-group-title">内置示例表（{builtinTables.length}）</div>
+            <div className="menu-group-title">
+              {fill(t(REPLACE_TABLE.builtinTables), { count: builtinTables.length })}
+            </div>
             {builtinTables.map((meta) => (
               <button
                 key={meta.path}
@@ -290,34 +313,37 @@ export function ReplaceTableDialog({
               >
                 <span className="table-item-name">
                   {meta.name}
-                  <span className="table-badge">内置</span>
+                  <span className="table-badge">{t(REPLACE_TABLE.builtin)}</span>
                 </span>
-                <span className="table-item-count">{meta.entryCount} 条</span>
+                <span className="table-item-count">
+                  {fill(t(REPLACE_TABLE.entryCount), { count: meta.entryCount })}
+                </span>
               </button>
             ))}
 
             <div className="table-list-actions">
               <button type="button" onClick={handleNew} disabled={busy}>
-                新建
+                {t(REPLACE_TABLE.new)}
               </button>
               <button type="button" onClick={() => void handleImport()} disabled={busy}>
-                导入…
+                {t(REPLACE_TABLE.import)}
               </button>
               <button type="button" onClick={() => void handleDelete()} disabled={busy || !selected}>
-                删除
+                {t(REPLACE_TABLE.delete)}
               </button>
             </div>
           </aside>
 
           <section className="table-editor">
             <div className="table-editor-head">
+              {/* 路径是用户数据，只填充不翻译 */}
               <span className="dialog-hint">
                 {selected
-                  ? `源文件：${selected.path}`
-                  : '新表：保存后写入 %APPDATA%/AioTextEditor/tables/'}
+                  ? fill(t(REPLACE_TABLE.sourceFile), { path: selected.path })
+                  : t(REPLACE_TABLE.newTableHint)}
               </span>
               <span className={`table-state${dirty ? ' table-state-dirty' : ''}`}>
-                {dirty ? '未保存' : '已保存'}
+                {dirty ? t(REPLACE_TABLE.dirty) : t(REPLACE_TABLE.clean)}
               </span>
             </div>
 
@@ -331,13 +357,13 @@ export function ReplaceTableDialog({
             />
 
             <div className="table-rules">
-              <span className="dialog-hint">规则：</span>
+              <span className="dialog-hint">{t(REPLACE_TABLE.rulesLabel)}</span>
               {(
                 [
-                  ['wholeWord', '仅整词匹配'],
-                  ['caseSensitive', '区分大小写'],
-                  ['escape', '处理转义'],
-                  ['useRegex', '正则替换（v1.1）'],
+                  ['wholeWord', REPLACE_RULES.wholeWord],
+                  ['caseSensitive', REPLACE_RULES.caseSensitive],
+                  ['escape', REPLACE_RULES.escape],
+                  ['useRegex', REPLACE_RULES.useRegex],
                 ] as [keyof ReplaceRules, string][]
               ).map(([key, label]) => (
                 <label key={key} className="search-option">
@@ -347,7 +373,7 @@ export function ReplaceTableDialog({
                     disabled={!rules}
                     onChange={() => toggleRule(key)}
                   />
-                  {label}
+                  {t(label)}
                 </label>
               ))}
             </div>
@@ -357,9 +383,12 @@ export function ReplaceTableDialog({
                 <>
                   <span className={parsed.report.ok ? 'table-ok' : 'table-bad'}>
                     {parsed.report.ok
-                      ? `校验通过：${parsed.report.entryCount} 条`
-                      : `发现 ${parsed.report.errors} 处错误`}
-                    {parsed.report.warnings > 0 && `，${parsed.report.warnings} 处警告`}
+                      ? fill(t(REPLACE_TABLE.validOk), { count: parsed.report.entryCount })
+                      : fill(t(REPLACE_TABLE.hasErrors), { count: parsed.report.errors })}
+                    {parsed.report.warnings > 0 &&
+                      fill(t(REPLACE_TABLE.warningsSuffix), {
+                        count: parsed.report.warnings,
+                      })}
                   </span>
                   {parsed.report.issues.length > 0 && (
                     <ul className="issue-list">
@@ -368,7 +397,12 @@ export function ReplaceTableDialog({
                           key={`${issue.line}-${index}`}
                           className={issue.severity === 'error' ? 'issue-error' : 'issue-warning'}
                         >
-                          {issue.line > 0 && <span className="issue-line">第 {issue.line} 行</span>}
+                          {issue.line > 0 && (
+                            <span className="issue-line">
+                              {fill(t(REPLACE_TABLE.lineAt), { line: issue.line })}
+                            </span>
+                          )}
+                          {/* issue.message 由后端按语言给出（PRD L-5） */}
                           {issue.message}
                         </li>
                       ))}
@@ -376,7 +410,7 @@ export function ReplaceTableDialog({
                   )}
                 </>
               ) : (
-                <span className="dialog-hint">校验中…</span>
+                <span className="dialog-hint">{t(REPLACE_TABLE.validating)}</span>
               )}
             </div>
           </section>
@@ -390,16 +424,20 @@ export function ReplaceTableDialog({
             className="dialog-primary"
             onClick={() => void handleSave(false)}
             disabled={busy || !parsed || !parsed.report.ok}
-            title={parsed && !parsed.report.ok ? '存在错误，无法保存（F-04 §4.8）' : '保存到用户表目录'}
+            title={
+              parsed && !parsed.report.ok
+                ? t(REPLACE_TABLE.saveBlocked)
+                : t(REPLACE_TABLE.saveHint)
+            }
           >
-            保存
+            {t(REPLACE_TABLE.save)}
           </button>
           <button
             type="button"
             onClick={() => void handleSave(true)}
             disabled={busy || !parsed || !parsed.report.ok}
           >
-            另存副本…
+            {t(REPLACE_TABLE.saveAsCopy)}
           </button>
           <button
             type="button"
@@ -407,14 +445,14 @@ export function ReplaceTableDialog({
             disabled={busy || !parsed || !parsed.report.ok || activeContent == null}
             title={
               activeContent == null
-                ? '当前没有打开的文档'
-                : '用独立替换引擎（模式 A）应用到当前正文，可撤销（Ctrl+Z）'
+                ? t(REPLACE_TABLE.applyBlocked)
+                : t(REPLACE_TABLE.applyHint)
             }
           >
-            应用到正文
+            {t(REPLACE_TABLE.applyToDoc)}
           </button>
           <button type="button" className="dialog-cancel" onClick={onClose} disabled={busy}>
-            关闭
+            {t(COMMON.close)}
           </button>
         </div>
       </div>

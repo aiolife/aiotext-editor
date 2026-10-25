@@ -17,6 +17,10 @@ import {
   type MergeReport,
   type MergeRequest,
 } from '../platform/tauriApi';
+import { useI18n } from '../shared/i18n';
+import { MERGE } from '../shared/i18n/merge';
+import { COMMON } from '../shared/i18n/common';
+import { fill } from '../shared/i18n/status';
 
 interface MergeDialogProps {
   onDone: (message: string) => void;
@@ -26,6 +30,7 @@ interface MergeDialogProps {
 type Page = 'manual' | 'auto';
 
 export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
+  const { t } = useI18n();
   const [page, setPage] = useState<Page>('manual');
   const [files, setFiles] = useState<string[]>([]);
   const [directory, setDirectory] = useState('');
@@ -60,16 +65,26 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
     }
   };
 
+  /** 报告里的文件名与路径是用户数据，只填充不翻译；`reason` 由后端按语言给出 */
   const formatReport = (report: MergeReport): string => {
-    const parts = report.outputs.map(
-      (file) => `${file.name}（${file.fileCount} 个文件，${file.charCount} 字）`,
+    const parts = report.outputs.map((file) =>
+      fill(t(MERGE.reportFile), {
+        name: file.name,
+        files: file.fileCount,
+        chars: file.charCount,
+      }),
     );
-    const lines = [`写出 ${report.outputs.length} 个合并文件：${parts.join('、')}`];
+    const lines = [
+      fill(t(MERGE.reportOutputs), { count: report.outputs.length, list: parts.join('、') }),
+    ];
     if (report.skipped.length > 0) {
       lines.push(
-        `跳过 ${report.skipped.length} 项：${report.skipped
-          .map((skip) => `${skip.path}（${skip.reason}）`)
-          .join('；')}`,
+        fill(t(MERGE.reportSkipped), {
+          count: report.skipped.length,
+          list: report.skipped
+            .map((skip) => fill(t(MERGE.reportSkipItem), { path: skip.path, reason: skip.reason }))
+            .join('；'),
+        }),
       );
     }
     return lines.join('；');
@@ -101,7 +116,7 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
               overwrite,
             };
     if (!request) {
-      setError(page === 'manual' ? '请先添加源文件并选择输出文件' : '请先选择源目录');
+      setError(page === 'manual' ? t(MERGE.errorManual) : t(MERGE.errorAuto));
       return;
     }
     setBusy(true);
@@ -118,30 +133,31 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
   return (
     <div className="dialog-overlay">
       <div className="dialog dialog-wide">
-        <h2 className="dialog-title">文件合并</h2>
+        <h2 className="dialog-title">{t(MERGE.title)}</h2>
         <div className="merge-tabs">
           <button
             className={page === 'manual' ? 'merge-tab merge-tab-active' : 'merge-tab'}
             onClick={() => setPage('manual')}
           >
-            手工合并
+            {t(MERGE.tabManual)}
           </button>
           <button
             className={page === 'auto' ? 'merge-tab merge-tab-active' : 'merge-tab'}
             onClick={() => setPage('auto')}
           >
-            自动合并（正则）
+            {t(MERGE.tabAuto)}
           </button>
         </div>
         <div className="dialog-body merge-dialog">
           {page === 'manual' ? (
             <>
               <div className="dialog-field">
-                <span>源文件（按挑选顺序合并）</span>
+                <span>{t(MERGE.sourceFiles)}</span>
                 <div className="merge-file-list">
                   {files.length === 0 ? (
-                    <p className="merge-file-empty">尚未选择文件</p>
+                    <p className="merge-file-empty">{t(MERGE.noFile)}</p>
                   ) : (
+                    // 路径是用户数据，原样显示
                     files.map((file) => (
                       <div key={file} className="merge-file-row">
                         <span className="merge-file-name">{file}</span>
@@ -149,54 +165,54 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
                           className="merge-file-remove"
                           onClick={() => setFiles(files.filter((f) => f !== file))}
                         >
-                          移除
+                          {t(MERGE.remove)}
                         </button>
                       </div>
                     ))
                   )}
                 </div>
                 <button className="merge-pick" onClick={addFiles}>
-                  添加文件…
+                  {t(MERGE.addFiles)}
                 </button>
               </div>
               <label className="dialog-field">
-                <span>排序关键字（可选，对文件名求值的正则，如 序-(\d+)-）</span>
+                <span>{t(MERGE.sortKey)}</span>
                 <input
                   type="text"
                   value={sortKey}
                   onChange={(e) => setSortKey(e.target.value)}
-                  placeholder="留空保持挑选顺序"
+                  placeholder={t(MERGE.sortKeyPlaceholder)}
                 />
               </label>
               <div className="dialog-field">
-                <span>输出文件</span>
+                <span>{t(MERGE.outputFile)}</span>
                 <div className="merge-output-row">
                   <input
                     type="text"
                     value={outputPath}
                     onChange={(e) => setOutputPath(e.target.value)}
-                    placeholder="选择或输入输出文件路径"
+                    placeholder={t(MERGE.outputPlaceholder)}
                   />
-                  <button onClick={chooseOutput}>另存为…</button>
+                  <button onClick={chooseOutput}>{t(MERGE.saveAs)}</button>
                 </div>
               </div>
             </>
           ) : (
             <>
               <div className="dialog-field">
-                <span>源目录</span>
+                <span>{t(MERGE.sourceDir)}</span>
                 <div className="merge-output-row">
                   <input
                     type="text"
                     value={directory}
                     onChange={(e) => setDirectory(e.target.value)}
-                    placeholder="选择源文件目录"
+                    placeholder={t(MERGE.dirPlaceholder)}
                   />
-                  <button onClick={chooseDirectory}>浏览…</button>
+                  <button onClick={chooseDirectory}>{t(COMMON.browse)}</button>
                 </div>
               </div>
               <label className="dialog-field">
-                <span>源文件名正则（含捕获组）</span>
+                <span>{t(MERGE.sourcePattern)}</span>
                 <input
                   type="text"
                   value={sourcePattern}
@@ -204,7 +220,7 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
                 />
               </label>
               <label className="dialog-field">
-                <span>输出文件名模板（按第 1 捕获组分文件）</span>
+                <span>{t(MERGE.outputPattern)}</span>
                 <input
                   type="text"
                   value={outputPattern}
@@ -212,7 +228,7 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
                 />
               </label>
               <label className="dialog-field">
-                <span>排序关键字（对捕获组求值的模板）</span>
+                <span>{t(MERGE.autoSortKey)}</span>
                 <input
                   type="text"
                   value={autoSortKey}
@@ -220,9 +236,11 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
                 />
               </label>
               <p className="dialog-text">
-                例：源正则 {DEFAULT_MERGE_PATTERNS.sourcePattern} + 模板{' '}
-                {DEFAULT_MERGE_PATTERNS.outputPattern} + 关键字 {DEFAULT_MERGE_PATTERNS.sortKey}
-                ，把 1_2.txt、1_10.txt 合成 1.txt（按第 2 段数字排序）。
+                {fill(t(MERGE.example), {
+                  source: DEFAULT_MERGE_PATTERNS.sourcePattern,
+                  output: DEFAULT_MERGE_PATTERNS.outputPattern,
+                  sort: DEFAULT_MERGE_PATTERNS.sortKey,
+                })}
               </p>
             </>
           )}
@@ -232,16 +250,16 @@ export function MergeDialog({ onDone, onCancel }: MergeDialogProps) {
               checked={overwrite}
               onChange={(e) => setOverwrite(e.target.checked)}
             />
-            输出文件已存在时直接覆盖（默认跳过并在报告里说明）
+            {t(MERGE.overwrite)}
           </label>
         </div>
         {error ? <p className="dialog-error">{error}</p> : null}
         <div className="dialog-actions">
           <button className="dialog-cancel" onClick={onCancel}>
-            取消
+            {t(COMMON.cancel)}
           </button>
           <button className="dialog-primary" disabled={busy} onClick={run}>
-            {busy ? '合并中…' : '合并'}
+            {busy ? t(MERGE.merging) : t(MERGE.start)}
           </button>
         </div>
       </div>

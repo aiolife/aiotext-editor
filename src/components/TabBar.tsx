@@ -4,6 +4,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { EditorTab } from '../store/tabsStore';
+import { useI18n } from '../shared/i18n';
+import { TABBAR } from '../shared/i18n/dialogs';
+import { fill } from '../shared/i18n/status';
 
 interface TabBarProps {
   tabs: EditorTab[];
@@ -35,6 +38,7 @@ export function TabBar({
   onSave,
   onSaveAs,
 }: TabBarProps) {
+  const { t } = useI18n();
   const [menu, setMenu] = useState<MenuState | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -91,13 +95,14 @@ export function TabBar({
             setMenu({ tabId: tab.id, x: e.clientX, y: e.clientY });
           }}
         >
-          {tab.dirty && <span className="tabbar-dot" title="已修改，未保存" />}
+          {tab.dirty && <span className="tabbar-dot" title={t(TABBAR.dirtyTitle)} />}
+          {/* 文件名与路径是用户数据，原样显示、不过 t（PRD §3.6 L-3） */}
           <span className="tabbar-label" title={tab.filePath ?? tab.fileName}>
             {tab.fileName}
           </span>
           <button
             className="tabbar-close"
-            aria-label={`关闭 ${tab.fileName}`}
+            aria-label={fill(t(TABBAR.closeA11y), { name: tab.fileName })}
             onClick={(e) => {
               e.stopPropagation();
               onClose(tab.id);
@@ -116,7 +121,7 @@ export function TabBar({
           style={{ left: menu.x, top: menu.y }}
         >
           <button type="button" role="menuitem" className="menu-item" onClick={() => run(onClose, menu.tabId)}>
-            关闭
+            {t(TABBAR.close)}
           </button>
           <button
             type="button"
@@ -124,7 +129,7 @@ export function TabBar({
             className="menu-item"
             onClick={() => run(onCloseOthers, menu.tabId)}
           >
-            关闭其他标签
+            {t(TABBAR.closeOthers)}
           </button>
           <button
             type="button"
@@ -135,11 +140,11 @@ export function TabBar({
               onCloseAll();
             }}
           >
-            全部关闭
+            {t(TABBAR.closeAll)}
           </button>
           <div className="menu-sep" />
           <button type="button" role="menuitem" className="menu-item" onClick={() => run(onSave, menu.tabId)}>
-            保存
+            {t(TABBAR.save)}
           </button>
           <button
             type="button"
@@ -147,7 +152,7 @@ export function TabBar({
             className="menu-item"
             onClick={() => run(onSaveAs, menu.tabId)}
           >
-            另存为…
+            {t(TABBAR.saveAs)}
           </button>
         </div>
       )}

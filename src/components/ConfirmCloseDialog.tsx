@@ -9,6 +9,10 @@
  */
 import { useEffect } from 'react';
 import type { EditorTab } from '../store/tabsStore';
+import { useI18n } from '../shared/i18n';
+import { CONFIRM_CLOSE } from '../shared/i18n/dialogs';
+import { COMMON } from '../shared/i18n/common';
+import { fill } from '../shared/i18n/status';
 
 export type CloseDecision = 'save' | 'discard' | 'cancel';
 
@@ -22,6 +26,7 @@ interface ConfirmCloseDialogProps {
 const MAX_SHOWN = 8;
 
 export function ConfirmCloseDialog({ tabs, onDecide }: ConfirmCloseDialogProps) {
+  const { t } = useI18n();
   const multiple = tabs.length > 1;
   const shown = tabs.slice(0, MAX_SHOWN);
   const rest = tabs.length - shown.length;
@@ -40,38 +45,45 @@ export function ConfirmCloseDialog({ tabs, onDecide }: ConfirmCloseDialogProps) 
 
   return (
     <div className="dialog-overlay" role="presentation">
-      <div className="dialog" role="alertdialog" aria-label="存在未保存的修改">
+      <div className="dialog" role="alertdialog" aria-label={t(CONFIRM_CLOSE.a11y)}>
         <h2 className="dialog-title">
-          {multiple ? `有 ${tabs.length} 个文件尚未保存` : '有未保存的修改'}
+          {multiple
+            ? fill(t(CONFIRM_CLOSE.titleMultiple), { count: tabs.length })
+            : t(CONFIRM_CLOSE.titleSingle)}
         </h2>
 
         {multiple ? (
           <ul className="dialog-list">
-            {shown.map((t) => (
-              <li key={t.id}>{t.fileName}</li>
+            {shown.map((tab) => (
+              <li key={tab.id}>{tab.fileName}</li>
             ))}
-            {rest > 0 && <li className="dialog-list-more">…等 {rest} 个</li>}
+            {rest > 0 && (
+              <li className="dialog-list-more">
+                {fill(t(CONFIRM_CLOSE.more), { count: rest })}
+              </li>
+            )}
           </ul>
         ) : (
-          <p className="dialog-text">「{tabs[0].fileName}」的修改还没有保存到磁盘。</p>
+          // 文件名是用户数据，只做拼接、不过 t
+          <p className="dialog-text">
+            {fill(t(CONFIRM_CLOSE.textSingle), { name: tabs[0].fileName })}
+          </p>
         )}
 
         <p className="dialog-text dialog-hint">
-          {multiple
-            ? '「全部保存」会逐个保存（没有保存位置的文件会询问路径），保存成功的才会关闭。'
-            : '「不保存」会丢弃此次修改，且下次启动不会恢复。'}
+          {multiple ? t(CONFIRM_CLOSE.hintMultiple) : t(CONFIRM_CLOSE.hintSingle)}
         </p>
 
         <div className="dialog-actions">
           <button className="dialog-primary" onClick={() => onDecide('save')}>
-            {multiple ? '全部保存' : '保存'}
+            {multiple ? t(CONFIRM_CLOSE.saveAll) : t(CONFIRM_CLOSE.save)}
           </button>
           <button className="dialog-danger" onClick={() => onDecide('discard')}>
-            {multiple ? '全部不保存' : '不保存'}
+            {multiple ? t(CONFIRM_CLOSE.discardAll) : t(CONFIRM_CLOSE.discard)}
           </button>
           {/* 默认焦点落在「取消」：手滑按下的空格 / 回车不会造成任何不可逆后果 */}
           <button className="dialog-cancel" autoFocus onClick={() => onDecide('cancel')}>
-            取消
+            {t(COMMON.cancel)}
           </button>
         </div>
       </div>

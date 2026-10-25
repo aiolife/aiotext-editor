@@ -64,9 +64,16 @@ export function t(text: string): string {
   return moduleState.map?.get(text) ?? text;
 }
 
-/** 供 Provider 在切语言时同步给模块级单例 */
-function syncModuleState(value: I18nValue): void {
-  moduleState = value;
+/**
+ * 供外层在渲染期同步单例（幂等）。
+ *
+ * 为什么需要它：`App` 自己要渲染文案，但它同时又**提供** Provider，于是它本身
+ * 拿不到 Context（Provider 的子树才有）。只靠 Provider 内部同步的话，App 自己的
+ * 文案会慢一帧（用的是上一语言）。所以 App 在渲染体开头先调一次这里，让自己也
+ * 与当前语言对齐；Provider 随后再同步一次，值不变。
+ */
+export function configureI18n(lang: Lang, map: TraditionalMap | null): void {
+  moduleState = { lang, map };
 }
 
 interface LanguageProviderProps {
@@ -83,7 +90,7 @@ interface LanguageProviderProps {
  */
 export function LanguageProvider({ lang, map, children }: LanguageProviderProps) {
   const value = useMemo<I18nValue>(() => ({ lang, map }), [lang, map]);
-  syncModuleState(value);
+  configureI18n(lang, map);
   return createElement(I18nContext.Provider, { value }, children);
 }
 

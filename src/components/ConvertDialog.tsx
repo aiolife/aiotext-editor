@@ -15,6 +15,10 @@ import {
   type OpenccDirectionMeta,
   type TableMeta,
 } from '../platform/tauriApi';
+import { useI18n } from '../shared/i18n';
+import { CONVERT } from '../shared/i18n/convert';
+import { COMMON } from '../shared/i18n/common';
+import { fill } from '../shared/i18n/status';
 
 /** 转换作用对象 */
 export interface ConvertTarget {
@@ -48,23 +52,29 @@ function renderHighlighted(text: string, range: [number, number] | null) {
 
 /** 歧义片段列表（同族方向用字不同处） */
 function AmbiguityList({ spans }: { spans: AmbiguitySpan[] }) {
+  const { t } = useI18n();
   const shown = spans.slice(0, 50);
   return (
     <div className="ambiguity-list">
       <div className="menu-group-title">
-        歧义片段 {spans.length} 处（其他地区标准在此用字不同）
+        {fill(t(CONVERT.ambiguityTitle), { count: spans.length })}
       </div>
       <ul>
         {shown.map((span, index) => (
+          // 片段原文是用户数据，不翻译
           <li key={`${span.start}-${index}`}>
-            <code>{span.primary || '（空）'}</code>
-            <span className="ambiguity-alt"> ← {span.candidates.join(' / ') || '（空）'}</span>
-            <span className="dialog-hint"> 位置 {span.start}</span>
+            <code>{span.primary || t(CONVERT.emptySpan)}</code>
+            <span className="ambiguity-alt">
+              {fill(t(CONVERT.ambiguityAlt), {
+                candidates: span.candidates.join(' / ') || t(CONVERT.emptySpan),
+              })}
+            </span>
+            <span className="dialog-hint">{fill(t(CONVERT.position), { start: span.start })}</span>
           </li>
         ))}
       </ul>
       {spans.length > shown.length && (
-        <div className="dialog-hint">仅列出前 {shown.length} 处</div>
+        <div className="dialog-hint">{fill(t(CONVERT.onlyFirst), { count: shown.length })}</div>
       )}
     </div>
   );
@@ -78,6 +88,7 @@ export function ConvertDialog({
   onApply,
   onCancel,
 }: ConvertDialogProps) {
+  const { t } = useI18n();
   const [direction, setDirection] = useState(initialDirection);
   const [skip, setSkip] = useState<string[]>([]);
   const [applyTables, setApplyTables] = useState<string[]>([]);
@@ -86,7 +97,7 @@ export function ConvertDialog({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ConvertPreview | null>(null);
 
-  const scopeLabel = target.scope === 'all' ? '整篇' : '选中文本';
+  const scopeLabel = target.scope === 'all' ? t(CONVERT.scopeAll) : t(CONVERT.scopeSelection);
 
   const buildRequest = (): ConvertRequest => ({
     text: target.text,
@@ -144,14 +155,17 @@ export function ConvertDialog({
   return (
     <div className="dialog-overlay">
       <div className="dialog dialog-wide" role="dialog" aria-modal="true">
-        <h3 className="dialog-title">简繁转换</h3>
+        <h3 className="dialog-title">{t(CONVERT.title)}</h3>
         <p className="dialog-text">
-          转换范围：<strong>{scopeLabel}</strong>
-          <span className="dialog-hint">（{target.text.length} 字符）</span>
+          {t(CONVERT.scopeLabel)}
+          <strong>{scopeLabel}</strong>
+          <span className="dialog-hint">
+            {fill(t(CONVERT.charCount), { count: target.text.length })}
+          </span>
         </p>
 
         <div className="dialog-row">
-          <label htmlFor="convert-direction">转换方向</label>
+          <label htmlFor="convert-direction">{t(CONVERT.direction)}</label>
           <select
             id="convert-direction"
             value={direction}
@@ -163,14 +177,14 @@ export function ConvertDialog({
           >
             {directions.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.label}
+                {t(item.label)}
               </option>
             ))}
           </select>
         </div>
 
         <fieldset className="dialog-fieldset">
-          <legend>括号对豁免（范围内的字符不参与转换）</legend>
+          <legend>{t(CONVERT.bracketLegend)}</legend>
           <div className="bracket-grid">
             {BRACKET_PRESETS.map((preset) => (
               <label key={preset.label} className="bracket-item">
@@ -188,7 +202,7 @@ export function ConvertDialog({
 
         {userTables.length > 0 && (
           <fieldset className="dialog-fieldset">
-            <legend>叠加用户替换表（F-04 模式 B：交给 OpenCC 内联词典，先勾选者优先）</legend>
+            <legend>{t(CONVERT.tableLegend)}</legend>
             <div className="bracket-grid">
               {userTables.map((table) => (
                 <label key={table.path} className="bracket-item" title={table.description}>
@@ -198,8 +212,9 @@ export function ConvertDialog({
                     disabled={busy}
                     onChange={() => toggleTable(table.name)}
                   />
+                  {/* 表名是用户数据，不翻译（PRD §3.6 L-3） */}
                   {table.name}
-                  {table.builtin && <span className="table-badge">内置</span>}
+                  {table.builtin && <span className="table-badge">{t(CONVERT.builtin)}</span>}
                 </label>
               ))}
             </div>
@@ -216,18 +231,25 @@ export function ConvertDialog({
               setDiagnostics(e.target.checked);
             }}
           />
-          歧义片段诊断（列出其他地区标准用字不同的位置）
+          {t(CONVERT.diagnostics)}
         </label>
 
+        {/* 后端错误文案：Rust 侧已按语言输出（PRD L-5），这里原样显示 */}
         {error && <div className="dialog-error">{error}</div>}
 
         {preview && (
           <div className="convert-preview">
             <div className="convert-preview-head">
               {preview.lines.length === 0
-                ? '没有可转换的内容'
-                : `差异 ${preview.changedLines} / ${preview.totalLines} 行 · 变更 ${preview.changedCount} 字符`}
-              {preview.truncated && <span className="dialog-hint">（仅显示前 200 个差异行）</span>}
+                ? t(CONVERT.emptyPreview)
+                : fill(t(CONVERT.diffSummary), {
+                    changed: preview.changedLines,
+                    total: preview.totalLines,
+                    count: preview.changedCount,
+                  })}
+              {preview.truncated && (
+                <span className="dialog-hint">{t(CONVERT.truncated)}</span>
+              )}
             </div>
             <div className="diff-list">
               {preview.lines.map((line) => (
@@ -244,13 +266,13 @@ export function ConvertDialog({
 
         <div className="dialog-actions">
           <button type="button" onClick={runPreview} disabled={busy}>
-            预览差异
+            {t(CONVERT.preview)}
           </button>
           <button type="button" className="dialog-primary" onClick={runApply} disabled={busy}>
-            应用转换
+            {t(CONVERT.apply)}
           </button>
           <button type="button" className="dialog-cancel" onClick={onCancel} disabled={busy}>
-            取消
+            {t(COMMON.cancel)}
           </button>
         </div>
       </div>

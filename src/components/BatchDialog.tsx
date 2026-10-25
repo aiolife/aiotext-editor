@@ -41,6 +41,9 @@ import {
   type PipelineStep,
   type ToolMeta,
 } from '../platform/tauriApi';
+import { useI18n } from '../shared/i18n';
+import { BATCH } from '../shared/i18n/batch';
+import { fill } from '../shared/i18n/status';
 
 interface BatchDialogProps {
   onClose: () => void;
@@ -50,6 +53,7 @@ interface BatchDialogProps {
 type Stage = 'config' | 'running' | 'done';
 
 export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
+  const { t } = useI18n();
   const [catalog, setCatalog] = useState<ToolMeta[]>([]);
   const [inputs, setInputs] = useState<string[]>([]);
   /** 勾选要参与本次处理的路径（默认全选；「不选」的项在启动前被过滤） */
@@ -127,7 +131,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
   const grouped = useMemo(() => {
     const map = new Map<string, ToolMeta[]>();
     for (const t of catalog) {
-      const g = t.group || '其他';
+      const g = t.group || BATCH.otherGroup;
       if (!map.has(g)) map.set(g, []);
       map.get(g)!.push(t);
     }
@@ -229,11 +233,11 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
   /** 启动前做一次「计划预览」，避免把空目录 / 全是无效路径的请求送进批处理 */
   const previewPlan = async (): Promise<{ req: BatchRequest; count: number } | null> => {
     if (activeInputs.length === 0) {
-      onNotice('请先选择要处理的文件（右侧「全选 / 选择」或添加路径）');
+      onNotice(t(BATCH.needFiles));
       return null;
     }
     if (queue.length === 0) {
-      onNotice('请至少选择一个处理步骤');
+      onNotice(t(BATCH.needSteps));
       return null;
     }
     const req: BatchRequest = {
@@ -249,12 +253,12 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
       const plan = await batchPlan(req);
       setFileCount(plan.fileCount);
       if (plan.fileCount === 0) {
-        onNotice(`所选目录下没有可处理的文件（深度=${recursive ? '∞' : '1'}）`);
+        onNotice(fill(t(BATCH.noFilesInDir), { depth: recursive ? '∞' : '1' }));
         return null;
       }
       return { req, count: plan.fileCount };
     } catch (e) {
-      onNotice('预览失败：' + String(e));
+      onNotice(fill(t(BATCH.previewFailed), { error: String(e) }));
       return null;
     }
   };
@@ -300,7 +304,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
             }
             break;
           case 'cancelled':
-            onNotice(`已取消：处理到 ${msg.processed}/${msg.total}`);
+            onNotice(fill(t(BATCH.cancelledAt), { done: msg.processed, total: msg.total }));
             break;
           case 'finished':
             sawFinished = true;
@@ -312,11 +316,20 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
       if (!sawFinished) applyReport(report);
       onNotice(
         report.cancelled
-          ? `批处理已取消（已处理 ${report.written + report.unchanged}/${report.scanned}）`
-          : `批处理完成：处理 ${report.scanned} 个文件，改写 ${report.written}，备份 ${report.backedUp}，错误 ${report.errors.length}，耗时 ${report.elapsedMs}ms`,
+          ? fill(t(BATCH.doneCancelled), {
+              done: report.written + report.unchanged,
+              total: report.scanned,
+            })
+          : fill(t(BATCH.done), {
+              scanned: report.scanned,
+              written: report.written,
+              backedUp: report.backedUp,
+              errors: report.errors.length,
+              elapsed: report.elapsedMs,
+            }),
       );
     } catch (e) {
-      onNotice('批处理失败：' + String(e));
+      onNotice(fill(t(BATCH.failed), { error: String(e) }));
       setStage('config');
     }
   };
@@ -330,15 +343,19 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
   };
 
   return (
-    <div className="dialog-overlay" role="dialog" aria-label="批处理">
+    <div className="dialog-overlay" role="dialog" aria-label={t(BATCH.a11y)}>
       <div className="dialog-body batch-dialog batch-dialog-textpro">
         <header className="dialog-header">
-          <strong>批处理操作</strong>
+          <strong>{t(BATCH.title)}</strong>
           {stage === 'config' ? (
-            <span className="batch-hint">加入文件 → 选处理步骤 → 处理</span>
+            <span className="batch-hint">{t(BATCH.hintConfig)}</span>
           ) : (
             <span className="batch-hint">
-              {progress.done}/{progress.total}（已改 {progress.modified}）
+              {fill(t(BATCH.progress), {
+                done: progress.done,
+                total: progress.total,
+                modified: progress.modified,
+              })}
             </span>
           )}
         </header>
@@ -347,14 +364,14 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
           <>
             {/* ---------- 需处理文件 ---------- */}
             <div className="batch-files-head">
-              <span>需处理文件</span>
+              <span>{t(BATCH.filesHead)}</span>
               <label className="batch-inline-check">
                 <input
                   type="checkbox"
                   checked={backup}
                   onChange={(e) => setBackup(e.target.checked)}
                 />
-                建立后备文件
+                {t(BATCH.backup)}
               </label>
             </div>
 
@@ -362,12 +379,12 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
               <div className="batch-file-table">
                 <div className="batch-file-head">
                   <span />
-                  <span>文件名</span>
-                  <span>路径</span>
+                  <span>{t(BATCH.fileName)}</span>
+                  <span>{t(BATCH.filePath)}</span>
                 </div>
                 <div className="batch-file-body">
                   {inputs.length === 0 ? (
-                    <p className="batch-empty">用右侧「文件(F)…」选目录，或直接把路径粘到下面回车</p>
+                    <p className="batch-empty">{t(BATCH.emptyFiles)}</p>
                   ) : (
                     inputs.map((path, index) => (
                       <div
@@ -398,30 +415,30 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
 
               <div className="batch-file-actions">
                 <button type="button" onClick={() => void browseInputDir()}>
-                  文件(F)…
+                  {t(BATCH.browseFile)}
                 </button>
                 <button type="button" onClick={selectAll} disabled={inputs.length === 0}>
-                  全选(A)
+                  {t(BATCH.selectAll)}
                 </button>
                 <button type="button" onClick={selectNone} disabled={inputs.length === 0}>
-                  全不选(A)
+                  {t(BATCH.selectNone)}
                 </button>
                 <button
                   type="button"
                   onClick={() => setFocusSelected(true)}
                   disabled={focusIndex === null}
                 >
-                  选择(S)
+                  {t(BATCH.selectOne)}
                 </button>
                 <button
                   type="button"
                   onClick={() => setFocusSelected(false)}
                   disabled={focusIndex === null}
                 >
-                  不选(X)
+                  {t(BATCH.deselectOne)}
                 </button>
                 <button type="button" onClick={clearAll} disabled={inputs.length === 0}>
-                  清空(C)
+                  {t(BATCH.clear)}
                 </button>
               </div>
             </div>
@@ -430,7 +447,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
               <input
                 type="text"
                 className="batch-path-input"
-                placeholder="目录或文件路径（键入 / 粘贴后回车）"
+                placeholder={t(BATCH.pathPlaceholder)}
                 value={pendingPath}
                 onChange={(e) => {
                   setPendingPath(e.target.value);
@@ -441,7 +458,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                 }}
               />
               <button type="button" onClick={() => addInputPath()} disabled={!pendingPath.trim()}>
-                添加
+                {t(BATCH.add)}
               </button>
               <label className="batch-inline-check">
                 <input
@@ -452,21 +469,23 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                     setFileCount(null);
                   }}
                 />
-                递归子目录
+                {t(BATCH.recursive)}
               </label>
               {fileCount !== null && (
-                <span className="batch-plan-hint">将处理 {fileCount} 个文件</span>
+                <span className="batch-plan-hint">
+                  {fill(t(BATCH.planHint), { count: fileCount })}
+                </span>
               )}
             </div>
 
             {/* ---------- 可选择的处理 / 需进行的处理 ---------- */}
             <div className="batch-tools">
               <div className="batch-tool-col">
-                <div className="batch-col-title">可选择的处理</div>
+                <div className="batch-col-title">{t(BATCH.availableTools)}</div>
                 <div className="batch-list">
                   {grouped.map(([group, tools]) => (
                     <div key={group}>
-                      <div className="batch-list-group">{group}</div>
+                      <div className="batch-list-group">{t(group)}</div>
                       {tools.map((tool) => (
                         <button
                           key={tool.id}
@@ -476,11 +495,11 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                               ? 'batch-list-item batch-list-item-focus'
                               : 'batch-list-item'
                           }
-                          title={tool.hint || tool.label}
+                          title={t(tool.hint || tool.label)}
                           onClick={() => setLibFocus(tool.id)}
                           onDoubleClick={() => addStep(tool)}
                         >
-                          {tool.label}
+                          {t(tool.label)}
                           {tool.hasOptions ? <span className="ellipsis">…</span> : null}
                         </button>
                       ))}
@@ -493,7 +512,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                 <button
                   type="button"
                   disabled={libFocus === null}
-                  title="把选中的处理加到右侧"
+                  title={t(BATCH.addStepTitle)}
                   onClick={() => {
                     const tool = catalog.find((t) => t.id === libFocus);
                     if (tool) addStep(tool);
@@ -504,7 +523,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                 <button
                   type="button"
                   disabled={queueFocus === null}
-                  title="从右侧移除选中的处理"
+                  title={t(BATCH.removeStepTitle)}
                   onClick={() => removeStep()}
                 >
                   &lt;&lt;
@@ -512,10 +531,10 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
               </div>
 
               <div className="batch-tool-col">
-                <div className="batch-col-title">需进行的处理</div>
+                <div className="batch-col-title">{t(BATCH.queue)}</div>
                 <div className="batch-list batch-list-queue">
                   {queue.length === 0 ? (
-                    <p className="batch-empty">左侧双击或选中后点 &gt;&gt;</p>
+                    <p className="batch-empty">{t(BATCH.queueEmpty)}</p>
                   ) : (
                     queue.map((step, index) => {
                       const meta = catalog.find((m) => m.id === (step as { kind: string }).kind);
@@ -531,7 +550,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                         >
                           <span className="seq">{index + 1}.</span>
                           <span className="batch-queue-name">
-                            {meta?.label ?? (step as { kind: string }).kind}
+                            {meta?.label ? t(meta.label) : (step as { kind: string }).kind}
                           </span>
                           <button
                             type="button"
@@ -540,7 +559,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                               moveUp(index);
                             }}
                             disabled={index === 0}
-                            title="上移"
+                            title={t(BATCH.moveUp)}
                           >
                             ↑
                           </button>
@@ -551,7 +570,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                               moveDown(index);
                             }}
                             disabled={index === queue.length - 1}
-                            title="下移"
+                            title={t(BATCH.moveDown)}
                           >
                             ↓
                           </button>
@@ -561,7 +580,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                               e.stopPropagation();
                               removeStep(index);
                             }}
-                            title="移除"
+                            title={t(BATCH.remove)}
                           >
                             ×
                           </button>
@@ -576,27 +595,27 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
             {/* ---------- 编码 ---------- */}
             <div className="batch-io">
               <label>
-                输入编码：
+                {t(BATCH.inputEncoding)}
                 <select
                   value={inputEnc}
                   onChange={(e) => setInputEnc(e.target.value as EncodingOrAuto)}
                 >
                   {ENCODING_OR_AUTO_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                输出编码：
+                {t(BATCH.outputEncoding)}
                 <select
                   value={outputEnc}
                   onChange={(e) => setOutputEnc(e.target.value as EncodingOrAuto)}
                 >
                   {ENCODING_OR_AUTO_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </option>
                   ))}
                 </select>
@@ -607,7 +626,7 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                   checked={preserveMtime}
                   onChange={(e) => setPreserveMtime(e.target.checked)}
                 />
-                保留修改时间
+                {t(BATCH.preserveMtime)}
               </label>
             </div>
           </>
@@ -627,14 +646,21 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
               />
             </div>
             <div className="batch-progress-stats">
-              {progress.done}/{progress.total}（已改 {progress.modified}，错误 {errorCount}）
+              {fill(t(BATCH.progressStats), {
+                done: progress.done,
+                total: progress.total,
+                modified: progress.modified,
+                errors: errorCount,
+              })}
               {stage === 'running' && currentFile ? (
-                <span className="batch-current"> · 正在处理 {currentFile}</span>
+                <span className="batch-current">
+                  {fill(t(BATCH.currentFile), { name: currentFile })}
+                </span>
               ) : null}
             </div>
             {errorCount > 0 && (
               <details className="batch-errors" open>
-                <summary>错误面板（{errorCount}）</summary>
+                <summary>{fill(t(BATCH.errorPanel), { count: errorCount })}</summary>
                 <ul>
                   {errors.slice(-20).map((e, i) => (
                     <li key={i}>
@@ -645,17 +671,22 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
                   ))}
                   {/* 运行中列表是合并上报的最近若干条，条数少于总数时说明一下 */}
                   {errorCount > errors.length && (
-                    <li>… 运行中已累计 {errorCount} 条，结束后显示完整清单</li>
+                    <li>{fill(t(BATCH.errorTruncated), { count: errorCount })}</li>
                   )}
                 </ul>
               </details>
             )}
             {finalReport && (
               <p className="batch-final">
-                处理 {finalReport.scanned} 个文件 · 改写 {finalReport.written} · 未变{' '}
-                {finalReport.unchanged} · 备份 {finalReport.backedUp} · 错误{' '}
-                {finalReport.errors.length} · 耗时 {finalReport.elapsedMs}ms
-                {finalReport.cancelled && ' · 已取消'}
+                {fill(t(BATCH.finalReport), {
+                  scanned: finalReport.scanned,
+                  written: finalReport.written,
+                  unchanged: finalReport.unchanged,
+                  backedUp: finalReport.backedUp,
+                  errors: finalReport.errors.length,
+                  elapsed: finalReport.elapsedMs,
+                })}
+                {finalReport.cancelled && t(BATCH.cancelled)}
               </p>
             )}
           </section>
@@ -665,23 +696,23 @@ export function BatchDialog({ onClose, onNotice }: BatchDialogProps) {
           {stage === 'config' ? (
             <>
               <button className="dialog-cancel" onClick={onClose}>
-                退出
+                {t(BATCH.exit)}
               </button>
               <button
                 className="dialog-primary"
                 onClick={handleStart}
                 disabled={activeInputs.length === 0 || queue.length === 0}
               >
-                处理
+                {t(BATCH.start)}
               </button>
             </>
           ) : stage === 'running' ? (
             <button className="dialog-cancel" onClick={handleCancel}>
-              取消
+              {t(BATCH.cancel)}
             </button>
           ) : (
             <button className="dialog-primary" onClick={onClose}>
-              完成
+              {t(BATCH.finish)}
             </button>
           )}
         </footer>

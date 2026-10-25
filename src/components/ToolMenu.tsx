@@ -8,6 +8,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PipelineStep, ToolId, ToolMeta } from '../platform/tauriApi';
+import { useI18n } from '../shared/i18n';
+import { TOOL_MENU } from '../shared/i18n/dialogs';
 
 interface ToolMenuProps {
   tools: ToolMeta[];
@@ -27,6 +29,7 @@ export function ToolMenu({
   onConfigure,
   shortcuts = [],
 }: ToolMenuProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -70,17 +73,17 @@ export function ToolMenu({
         disabled={disabled || empty}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="文本整理工具（F-09）"
+        title={t(TOOL_MENU.title)}
         onClick={() => setOpen((v) => !v)}
       >
-        整理 ▾
+        {t(TOOL_MENU.trigger)}
       </button>
 
       {open && (
         <div className="menu-panel menu-panel-wide" role="menu">
           {shortcutTools.length > 0 && (
             <>
-              <div className="menu-group-title">常用</div>
+              <div className="menu-group-title">{t(TOOL_MENU.common)}</div>
               <div className="menu-shortcuts">
                 {shortcutTools.map((tool) => (
                   <button
@@ -88,13 +91,13 @@ export function ToolMenu({
                     type="button"
                     role="menuitem"
                     className="menu-item menu-item-inline"
-                    title={tool.hint}
+                    title={t(tool.hint)}
                     onClick={() => {
                       setOpen(false);
                       onRun({ kind: tool.id });
                     }}
                   >
-                    {tool.label}
+                    {t(tool.label)}
                   </button>
                 ))}
               </div>
@@ -105,14 +108,14 @@ export function ToolMenu({
           {groups.map((group, index) => (
             <div key={group.name}>
               {index > 0 && <div className="menu-sep" />}
-              <div className="menu-group-title">{group.name}</div>
+              <div className="menu-group-title">{t(group.name)}</div>
               {group.items.map((tool) => (
                 <button
                   key={tool.id}
                   type="button"
                   role="menuitem"
                   className="menu-item"
-                  title={tool.hint}
+                  title={t(tool.hint)}
                   onClick={() => {
                     setOpen(false);
                     if (tool.hasOptions) {
@@ -122,8 +125,10 @@ export function ToolMenu({
                     }
                   }}
                 >
-                  <span className="menu-item-label">{tool.label}</span>
-                  {tool.inspectsOnly && <span className="menu-item-badge">仅检查</span>}
+                  <span className="menu-item-label">{t(tool.label)}</span>
+                  {tool.inspectsOnly && (
+                    <span className="menu-item-badge">{t(TOOL_MENU.inspectOnly)}</span>
+                  )}
                   {tool.hasOptions && <span className="menu-item-more">…</span>}
                 </button>
               ))}

@@ -17,6 +17,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { appVersion } from '../platform/tauriApi';
 import { useBindings } from '../store/settingsStore';
 import { COMMANDS, formatKey, isMacPlatform, type ResolvedBinding } from '../shared/shortcuts';
+import { useI18n } from '../shared/i18n';
+import { HELP } from '../shared/i18n/help';
+import { COMMON } from '../shared/i18n/common';
 
 interface HelpDialogProps {
   onClose: () => void;
@@ -30,6 +33,7 @@ interface HelpRow {
 }
 
 export function HelpDialog({ onClose }: HelpDialogProps) {
+  const { t } = useI18n();
   const mac = isMacPlatform();
   /** 撤销组合键（纯文案，按平台显示；命令注册表里没有 undo 命令） */
   const undoKey = mac ? '⌘Z' : 'Ctrl+Z';
@@ -67,23 +71,23 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
   }, [bindings]);
 
   return (
-    <div className="dialog-overlay" role="dialog" aria-label="帮助与快捷键">
+    <div className="dialog-overlay" role="dialog" aria-label={t(HELP.title)}>
       <div className="dialog help-dialog">
-        <h2 className="dialog-title">帮助与快捷键</h2>
+        <h2 className="dialog-title">{t(HELP.title)}</h2>
 
         <div className="dialog-body help-body">
           {groups.map(([name, rows]) => (
             <section key={name} className="help-group">
-              <div className="menu-group-title">{name}</div>
+              <div className="menu-group-title">{t(name)}</div>
               <ul className="help-list">
                 {rows.map((row) => (
                   <li key={row.id}>
-                    <span className="help-label">{row.label}</span>
+                    <span className="help-label">{t(row.label)}</span>
                     <span className="help-keys">
                       {row.binding?.key ? (
                         <kbd>{formatKey(row.binding.key, mac)}</kbd>
                       ) : (
-                        <span className="help-unbound">未绑定</span>
+                        <span className="help-unbound">{t(HELP.unbound)}</span>
                       )}
                     </span>
                   </li>
@@ -93,37 +97,38 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
           ))}
 
           <section className="help-group">
-            <div className="menu-group-title">使用提示</div>
+            <div className="menu-group-title">{t(HELP.tipsTitle)}</div>
             <ul className="help-tips">
               <li>
-                「整理」菜单里带「…」的工具可调选项并实时预览；有选区时只整理选区，否则整理整篇，
-                全部可以用 <kbd>{undoKey}</kbd> 撤销。
+                {/* 夹 <kbd> 的长句拆成前后两截翻译，中间那个空格留在 JSX 里 */}
+                {t(HELP.tip1Prefix)} <kbd>{undoKey}</kbd> {t(HELP.tip1Suffix)}
               </li>
-              <li>关闭有未保存修改的标签时会先询问；下次启动会自动恢复上次的标签与未保存内容。</li>
-              <li>设置改动立即生效并自动保存，没有「确定 / 取消」；误改可在「设置」菜单里恢复默认。</li>
-              <li>
-                快捷键可随时改绑：「设置 → 自定义快捷键…」。与系统冲突的组合会被拒绝，应用内重复会标红提示。
-              </li>
+              <li>{t(HELP.tip2)}</li>
+              <li>{t(HELP.tip3)}</li>
+              <li>{t(HELP.tip4)}</li>
             </ul>
           </section>
 
           <section className="help-group">
-            <div className="menu-group-title">关于</div>
+            <div className="menu-group-title">{t(HELP.aboutTitle)}</div>
             <ul className="help-tips">
-              <li>AioTextEditor {version ? `v${version}` : ''} —— 中文文本处理专用编辑器。</li>
-              <li>完全离线：不发起任何网络请求，不检查更新，不自动更新版本。</li>
               <li>
-                设置与恢复数据保存在用户数据目录下的 <code>AioTextEditor/settings.json</code> 与{' '}
-                <code>session.json</code>。
+                {t(HELP.about1Prefix)} {version ? `v${version}` : ''} {t(HELP.about1Suffix)}
+              </li>
+              <li>{t(HELP.about2)}</li>
+              <li>
+                {t(HELP.about3Prefix)} <code>AioTextEditor/settings.json</code>{' '}
+                {t(HELP.about3Mid)} <code>session.json</code>
+                {t(HELP.about3Suffix)}
               </li>
             </ul>
           </section>
         </div>
 
         <div className="dialog-actions">
-          <span className="dialog-hint">按 Esc 关闭</span>
+          <span className="dialog-hint">{t(HELP.escHint)}</span>
           <button type="button" className="dialog-primary" onClick={onClose}>
-            关闭
+            {t(COMMON.close)}
           </button>
         </div>
       </div>

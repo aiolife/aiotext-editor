@@ -24,9 +24,17 @@ import { useTabsStore, type EditorTab, type SaveDecision } from './store/tabsSto
 import { useSettingsStore } from './store/settingsStore';
 import { countOccurrences, countTextStats } from './shared/textStats';
 import { toast } from './store/toastStore';
-import { LanguageProvider, type TraditionalMap } from './shared/i18n';
+import { LanguageProvider, configureI18n, t, type TraditionalMap } from './shared/i18n';
 import { allSimplifiedTexts } from './shared/i18n/messages';
 import { uiTextsToTraditional } from './platform/tauriApi';
+import {
+  ACTION,
+  APP,
+  STATS_DOC,
+  STATS_PARA,
+  STATS_WORD,
+} from './shared/i18n/app';
+import { fill } from './shared/i18n/status';
 import { ToastHost } from './components/ToastHost';
 import type { SettingsTab } from './components/SettingsDialog';
 import {
@@ -396,7 +404,7 @@ export default function App() {
     // 前端不再需要过滤——列表就是全部可用方向。
     listOpenccDirections()
       .then(setDirections)
-      .catch((e) => setError(`繁简引擎初始化失败：${String(e)}（转换功能已禁用）`));
+      .catch((e) => setError(fill(t(APP.engineInitFailed), { error: String(e) })));
   }, []);
 
   // ---------- F-01 §1.2 会话恢复：启动时重建上次的标签与未保存内容 ----------
@@ -465,7 +473,7 @@ export default function App() {
       restoreSession(restored, session.activeTabId);
       setSessionReady(true);
       if (unreadable.length > 0) {
-        setError(`上次打开的文件已无法读取：${unreadable.join('、')}`);
+        setError(fill(t(APP.sessionUnreadable), { list: unreadable.join('、') }));
       }
     })();
     return () => {
@@ -534,6 +542,10 @@ export default function App() {
     };
   }, []);
 
+  // App 自己提供 Provider，拿不到 Context；这里先把模块级 `t` 与当前语言对齐，
+  // 本文件下面的文案才能跟着切（详见 configureI18n 的注释）
+  configureI18n(language, traditionalMap);
+
 
   /**
    * 主题 → `color-scheme`。
@@ -566,7 +578,7 @@ export default function App() {
     try {
       setReplaceTables(await listReplaceTables());
     } catch (e) {
-      setError(`替换表读取失败：${String(e)}`);
+      setError(fill(t(APP.tableLoadFailed), { error: String(e) }));
     }
   }, []);
 
@@ -578,7 +590,7 @@ export default function App() {
   useEffect(() => {
     pipelinesCatalog()
       .then(setTools)
-      .catch((e) => setError(`整理工具初始化失败：${String(e)}（整理功能已禁用）`));
+      .catch((e) => setError(fill(t(APP.toolInitFailed), { error: String(e) })));
   }, []);
 
   // 切换标签：丢弃尚未应用的替换指令，避免误写
@@ -593,7 +605,8 @@ export default function App() {
     try {
       await fn();
     } catch (e) {
-      setError(`${label}失败：${String(e)}`);
+      // 动作名与失败模板都在文案表里，繁體下拼出来的仍是通顺的一句
+      setError(fill(t(APP.actionFailed), { label: t(label), error: String(e) }));
     } finally {
       setBusy(false);
     }
@@ -637,7 +650,7 @@ export default function App() {
 
   const handleOpen = useCallback(
     () =>
-      runGuarded('打开文件', async () => {
+      runGuarded(t(ACTION.open), async () => {
         const path = await pickOpenFile();
         if (path) await openFile(path);
       }),
@@ -652,7 +665,7 @@ export default function App() {
 
   const handleSave = useCallback(
     () =>
-      runGuarded('保存', async () => {
+      runGuarded(t(ACTION.save), async () => {
         if (!activeTab) return;
         if (activeTab.filePath) {
           await saveTab(activeTab.id, (unmappable, tab) => askUser(unmappable, tab.encoding));
@@ -665,7 +678,7 @@ export default function App() {
 
   const handleSaveAs = useCallback(
     () =>
-      runGuarded('另存为', async () => {
+      runGuarded(t(ACTION.saveAs), async () => {
         if (activeTab) await doSaveAs(activeTab.id, activeTab.fileName);
       }),
     [activeTab, doSaveAs, runGuarded],
@@ -726,18 +739,22 @@ export default function App() {
           closable.push(...dirtyTabs.map((t) => t.id));
         } else {
           const savedIds: string[] = [];
-          for (const t of dirtyTabs) {
+          // 循环变量叫 `tab` 不叫 `t`：后者是翻译函数，遮蔽了会让下面两条提示静默退回简体
+          for (const tab of dirtyTabs) {
             try {
-              if (await saveTabById(t.id)) savedIds.push(t.id);
+              if (await saveTabById(tab.id)) savedIds.push(tab.id);
             } catch (e) {
-              setError(`保存「${t.fileName}」失败：${String(e)}`);
+              setError(fill(t(APP.saveTabFailed), { name: tab.fileName, error: String(e) }));
             }
           }
           closable.push(...savedIds);
-          const failed = dirtyTabs.filter((t) => !savedIds.includes(t.id));
+          const failed = dirtyTabs.filter((tab) => !savedIds.includes(tab.id));
           if (failed.length > 0) {
             setError(
-              `已保留 ${failed.length} 个没保存成功的文件：${failed.map((t) => t.fileName).join('、')}`,
+              fill(t(APP.keepUnsaved), {
+                count: failed.length,
+                list: failed.map((tab) => tab.fileName).join('、'),
+              }),
             );
           }
         }
@@ -772,33 +789,33 @@ export default function App() {
   /** 全部保存（保存后**不关闭**任何标签） */
   const handleSaveAll = useCallback(
     () =>
-      runGuarded('全部保存', async () => {
+      runGuarded(t(ACTION.saveAll), async () => {
         const dirty = tabs.filter((t) => t.dirty);
         if (dirty.length === 0) {
-          setNotice('没有需要保存的文件');
+          setNotice(t(APP.noFileToSave));
           return;
         }
         let failed = 0;
-        for (const t of dirty) {
-          if (!(await saveTabById(t.id))) failed += 1;
+        for (const tab of dirty) {
+          if (!(await saveTabById(tab.id))) failed += 1;
         }
-        if (failed > 0) setError(`${failed} 个文件未保存（可能取消了保存位置选择）`);
-        else setNotice(`已保存 ${dirty.length} 个文件`);
+        if (failed > 0) setError(fill(t(APP.someNotSaved), { count: failed }));
+        else setNotice(fill(t(APP.savedCount), { count: dirty.length }));
       }),
     [runGuarded, saveTabById, tabs],
   );
 
   /** 保存 / 另存为**指定**标签（标签右键菜单用，不一定是当前激活的那个） */
   const handleSaveTab = useCallback(
-    (id: string) => runGuarded('保存', async () => void (await saveTabById(id))),
+    (id: string) => runGuarded(t(ACTION.save), async () => void (await saveTabById(id))),
     [runGuarded, saveTabById],
   );
 
   const handleSaveTabAs = useCallback(
     (id: string) =>
-      runGuarded('另存为', async () => {
+      runGuarded(t(ACTION.saveAs), async () => {
         const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
-        await doSaveAs(id, tab?.fileName ?? '未命名');
+        await doSaveAs(id, tab?.fileName ?? t(APP.unnamed));
       }),
     [doSaveAs, runGuarded],
   );
@@ -806,12 +823,12 @@ export default function App() {
   /** 编辑 → 自定义替换 ▸ 某张表：与替换表对话框里的「应用到正文」走同一条路径 */
   const handleApplyTable = useCallback(
     (name: string) =>
-      runGuarded(`自定义替换：${name}`, async () => {
+      runGuarded(fill(t(ACTION.customReplace), { name }), async () => {
         if (!activeTab) return;
         const table = await loadReplaceTable(name);
         const report = await applyReplace(activeTab.content, table, { mode: 'standalone' });
         if (report.changedCount === 0) {
-          setNotice(`「${name}」在正文中没有命中`);
+          setNotice(fill(t(APP.replaceNoHit), { name }));
           return;
         }
         setPendingEdit({
@@ -820,7 +837,7 @@ export default function App() {
           text: report.text,
           nonce: Date.now(),
         });
-        setNotice(`已按「${name}」替换 ${report.changedCount} 处`);
+        setNotice(fill(t(APP.replaceDone), { name, count: report.changedCount }));
       }),
     [activeTab, runGuarded],
   );
@@ -828,10 +845,10 @@ export default function App() {
   /** 文件 → 编码转换 ▸ 目标编码：内容不动，按目标编码重写文件 */
   const handleConvertEncoding = useCallback(
     (encodingLabel: string) =>
-      runGuarded('编码转换', async () => {
+      runGuarded(t(ACTION.encodingConvert), async () => {
         if (!activeTab) return;
         if (!activeTab.filePath) {
-          setError('当前标签还没有保存到磁盘，无法转换编码');
+          setError(t(APP.noPathForEncoding));
           return;
         }
         const actual = await reencode(activeTab.id, encodingLabel, (unmappable, tab) =>
@@ -839,7 +856,7 @@ export default function App() {
         );
         if (actual === null) return; // 用户在不可编码字符弹窗里取消
         const label = ENCODING_OPTIONS.find((option) => option.value === actual)?.label ?? actual;
-        setNotice(`已按 ${label} 重新写出文件`);
+        setNotice(fill(t(APP.rewrittenAs), { label: t(label) }));
       }),
     [activeTab, askUser, reencode, runGuarded],
   );
@@ -847,18 +864,18 @@ export default function App() {
   /** 文件 → 重新载入 ▸ 指定编码（null = 打开原来的「选择编码」对话框） */
   const handleReloadWith = useCallback(
     (encodingLabel: string | null) =>
-      runGuarded('重新载入', async () => {
+      runGuarded(t(ACTION.reload), async () => {
         if (!activeTab) return;
         if (!encodingLabel) {
           setReloadTabId(activeTab.id);
           return;
         }
         if (!activeTab.filePath) {
-          setError('当前标签还没有保存到磁盘，无法重新载入');
+          setError(t(APP.noPathForReload));
           return;
         }
         await reloadWithEncoding(activeTab.id, encodingLabel);
-        setNotice(`已按 ${encodingLabel} 重新载入`);
+        setNotice(fill(t(APP.reloadedAs), { encoding: t(encodingLabel) }));
       }),
     [activeTab, reloadWithEncoding, runGuarded],
   );
@@ -906,37 +923,60 @@ export default function App() {
         ? text.slice(selectionRange.from, selectionRange.to)
         : '';
     setStatCtx({
-      title: '字数统计',
+      title: STATS_DOC.title,
       subtitle: selected
-        ? `全文统计；当前选区 ${snippet(selected)} 额外单列`
-        : '全文统计（未选中文字）',
+        ? fill(t(STATS_DOC.subtitleWithSelection), { snippet: snippet(selected) })
+        : STATS_DOC.subtitleNoSelection,
       columns: 2,
       rows: [
-        { label: '中文字数（汉字）', value: stats.chineseChars, hint: '含扩展区，々〇 也算' },
-        { label: '中文标点', value: stats.chinesePunct, hint: '、。「」【】……—— 等' },
-        { label: '字母个数', value: stats.letters, hint: '拉丁 / 假名 / 谚文等 Unicode 字母' },
-        { label: '单词个数', value: stats.words, hint: '连续字母数字为一词，汉字不计词' },
-        { label: '英文标点', value: stats.englishPunct, hint: 'ASCII 标点' },
-        { label: '数字个数', value: stats.digits, hint: '十进制数字符，含全角 ０-９' },
-        { label: '数字组', value: stats.numberGroups, hint: '连续数字算一组' },
-        { label: '字符数（不计空格与控制符）', value: stats.chars, hint: '代理对算 1 个字符' },
-        { label: '字符数（含空格）', value: stats.charsWithSpace, hint: '控制符仍不计' },
-        { label: '字符数（含空格与控制符）', value: stats.charsAll, hint: '全部码点' },
-        { label: '段落数', value: stats.paragraphs, hint: '空行分隔的连续非空行块' },
-        { label: '非空行数', value: stats.nonEmptyLines, hint: 'trim 后非空（段间空一行工具的口径）' },
-        { label: '行数', value: stats.lines, hint: '含空行' },
-        { label: '字节数（UTF-8）', value: stats.bytes },
+        {
+          label: STATS_DOC.chineseChars,
+          value: stats.chineseChars,
+          hint: STATS_DOC.chineseCharsHint,
+        },
+        {
+          label: STATS_DOC.chinesePunct,
+          value: stats.chinesePunct,
+          hint: STATS_DOC.chinesePunctHint,
+        },
+        { label: STATS_DOC.letters, value: stats.letters, hint: STATS_DOC.lettersHint },
+        { label: STATS_DOC.words, value: stats.words, hint: STATS_DOC.wordsHint },
+        {
+          label: STATS_DOC.englishPunct,
+          value: stats.englishPunct,
+          hint: STATS_DOC.englishPunctHint,
+        },
+        { label: STATS_DOC.digits, value: stats.digits, hint: STATS_DOC.digitsHint },
+        {
+          label: STATS_DOC.numberGroups,
+          value: stats.numberGroups,
+          hint: STATS_DOC.numberGroupsHint,
+        },
+        { label: STATS_DOC.chars, value: stats.chars, hint: STATS_DOC.charsHint },
+        {
+          label: STATS_DOC.charsWithSpace,
+          value: stats.charsWithSpace,
+          hint: STATS_DOC.charsWithSpaceHint,
+        },
+        { label: STATS_DOC.charsAll, value: stats.charsAll, hint: STATS_DOC.charsAllHint },
+        {
+          label: STATS_DOC.paragraphs,
+          value: stats.paragraphs,
+          hint: STATS_DOC.paragraphsHint,
+        },
+        {
+          label: STATS_DOC.nonEmptyLines,
+          value: stats.nonEmptyLines,
+          hint: STATS_DOC.nonEmptyLinesHint,
+        },
+        { label: STATS_DOC.lines, value: stats.lines, hint: STATS_DOC.linesHint },
+        { label: STATS_DOC.bytes, value: stats.bytes },
         // 有选区时顺便给出选区字数，省得为了看一段话先剪切一遍
         ...(selected
-          ? [
-              {
-                label: '选区字数（不计空格与控制符）',
-                value: countTextStats(selected).chars,
-              },
-            ]
+          ? [{ label: STATS_DOC.selectionChars, value: countTextStats(selected).chars }]
           : []),
       ],
-      note: '字符数一律不含代理对重复计数（`𩅯` 算 1 个）；空格、全角空格、制表符、换行与控制符不计入「不计空格」那一栏。',
+      note: STATS_DOC.note,
     });
   }, [activeTab, selectionRange]);
 
@@ -945,20 +985,21 @@ export default function App() {
     if (!activeTab) return;
     const text = activeTab.content;
     if (!selectionRange || selectionRange.to <= selectionRange.from) {
-      setNotice('请先在正文里选中一段文字，再统计它出现的次数');
+      setNotice(t(APP.needSelection));
       return;
     }
     const needle = text.slice(selectionRange.from, selectionRange.to);
     const stats = countTextStats(text);
     setStatCtx({
-      title: '选定文字出现次数',
-      subtitle: `在全文范围内统计 ${snippet(needle)}`,
+      title: STATS_WORD.title,
+      // needle 是用户选的文字，只填充不翻译
+      subtitle: fill(t(STATS_WORD.subtitle), { snippet: snippet(needle) }),
       rows: [
-        { label: '出现次数', value: countOccurrences(text, needle), hint: '不重叠计数' },
-        { label: '选定文字长度', value: Array.from(needle).length },
-        { label: '全文字符数', value: stats.charsAll },
+        { label: STATS_WORD.count, value: countOccurrences(text, needle), hint: STATS_WORD.countHint },
+        { label: STATS_WORD.length, value: Array.from(needle).length },
+        { label: STATS_WORD.totalChars, value: stats.charsAll },
       ],
-      note: '次数包含选区自身这一处；重叠出现不重复计数。',
+      note: STATS_WORD.note,
     });
   }, [activeTab, selectionRange]);
 
@@ -967,14 +1008,22 @@ export default function App() {
     if (!activeTab) return;
     const stats = countTextStats(activeTab.content);
     setStatCtx({
-      title: '段落数',
-      subtitle: '段落 = 空行分隔的连续非空行块',
+      title: STATS_PARA.title,
+      subtitle: STATS_PARA.subtitle,
       rows: [
-        { label: '段落数', value: stats.paragraphs, hint: '空行分隔的块' },
-        { label: '非空行数', value: stats.nonEmptyLines, hint: '段间空一行工具的口径' },
-        { label: '行数', value: stats.lines },
-        { label: '空行数', value: Math.max(0, stats.lines - stats.nonEmptyLines) },
-        { label: '全文字符数', value: stats.charsAll },
+        {
+          label: STATS_PARA.paragraphs,
+          value: stats.paragraphs,
+          hint: STATS_PARA.paragraphsHint,
+        },
+        {
+          label: STATS_PARA.nonEmptyLines,
+          value: stats.nonEmptyLines,
+          hint: STATS_PARA.nonEmptyLinesHint,
+        },
+        { label: STATS_PARA.lines, value: stats.lines },
+        { label: STATS_PARA.emptyLines, value: Math.max(0, stats.lines - stats.nonEmptyLines) },
+        { label: STATS_PARA.totalChars, value: stats.charsAll },
       ],
     });
   }, [activeTab]);
@@ -1009,10 +1058,12 @@ export default function App() {
       setPendingEdit({ from, to, text, nonce: Date.now() });
       setNotice(
         changedCount === 0
-          ? '已处理 0 处（没有可转换的内容）'
-          : `已转换 ${changedCount} 个字符` +
-              (target.scope === 'selection' ? '（选区）' : '（整篇）') +
-              (ambiguities.length > 0 ? `，检出 ${ambiguities.length} 处地区用字差异` : ''),
+          ? t(APP.convertedNothing)
+          : fill(t(APP.convertedCount), { count: changedCount }) +
+              (target.scope === 'selection' ? t(APP.scopeSelection) : t(APP.scopeAll)) +
+              (ambiguities.length > 0
+                ? fill(t(APP.ambiguityFound), { count: ambiguities.length })
+                : ''),
       );
       setConvertDialog(null);
     },
@@ -1022,7 +1073,7 @@ export default function App() {
   /** 菜单快捷转换：按当前选区/整篇直接转换（无预览） */
   const handleConvertPick = useCallback(
     (directionId: string) =>
-      runGuarded('转换', async () => {
+      runGuarded(t(ACTION.convert), async () => {
         if (!activeTab) return;
         const target = buildTarget(activeTab);
         const report = await convertOpencc({
@@ -1071,14 +1122,17 @@ export default function App() {
       const to = useSelection && selectionRange ? selectionRange.to : activeTab.content.length;
       const target = activeTab.content.slice(from, to);
       const outcome = await applyPipelineStep(target, step);
-      const scopeLabel = useSelection ? '（选区）' : '（整篇）';
+      const scopeLabel = useSelection ? t(APP.scopeSelection) : t(APP.scopeAll);
       const issues = outcome.bracketIssues;
+      // issue.message / outcome.notes 由后端按语言给出（PRD L-5），这里只拼结构
       const detail =
         issues.length > 0
           ? `；${issues
               .slice(0, 3)
               .map((issue) => issue.message)
-              .join('；')}${issues.length > 3 ? ` 等共 ${issues.length} 处` : ''}`
+              .join('；')}${
+              issues.length > 3 ? fill(t(APP.toolIssues), { count: issues.length }) : ''
+            }`
           : '';
       if (outcome.text !== target) {
         setPendingEdit({ from, to, text: outcome.text, nonce: Date.now() });
@@ -1091,7 +1145,7 @@ export default function App() {
   /** 菜单直接应用（无选项工具 / 快捷入口） */
   const handleRunTool = useCallback(
     (step: PipelineStep) =>
-      runGuarded('整理', async () => {
+      runGuarded(t(ACTION.tool), async () => {
         const label = tools.find((tool) => tool.id === step.kind)?.label ?? step.kind;
         await applyToolStep(step, label);
       }),
@@ -1204,18 +1258,23 @@ export default function App() {
           setDiffIndex(0);
           jumpToDiff(result.blocks[0]);
           const { added, missing } = diffStats(result.blocks, ctx.target);
-          const warn = result.degraded ? '（文本过大，未完整比较）' : '';
+          const warn = result.degraded ? t(APP.compareDegradedSuffix) : '';
           setNotice(
-            `发现 ${result.blocks.length} 处不一致：新增 ${added} 字、缺失 ${missing} 字${warn}（F5 下一处，Shift+F5 从光标重比）`,
+            fill(t(APP.compareFound), {
+              count: result.blocks.length,
+              added,
+              missing,
+              warn,
+            }),
           );
         } else {
           setDiffIndex(-1);
           setNotice(
-            result.degraded ? '比较完成：文本过大，未能完整比较' : '比较完成：两文一致',
+            result.degraded ? t(APP.compareDegradedDone) : t(APP.compareIdentical),
           );
         }
       } catch (e) {
-        setError(`比较失败：${String(e)}`);
+        setError(fill(t(APP.compareFailed), { error: String(e) }));
       }
     },
     [jumpToDiff],
@@ -1238,7 +1297,7 @@ export default function App() {
   const goNextDiff = useCallback(() => {
     if (!diffResult) return;
     if (diffIndex >= diffResult.blocks.length - 1) {
-      setNotice('已到最后一处不一致；改动后可按 Shift+F5 从两个光标处重新比较');
+      setNotice(t(APP.compareAtLast));
       return;
     }
     const next = diffIndex + 1;
@@ -1481,7 +1540,7 @@ export default function App() {
         run: () => {
           const next = NEXT_THEME[appearance.theme];
           updateSettings({ appearance: { ...appearance, theme: next } });
-          setNotice(`主题：${THEME_LABEL[next]}`);
+          setNotice(fill(t(APP.themeSwitched), { label: t(THEME_LABEL[next]) }));
         },
       },
       'view.toggleToolbar': {
@@ -1608,9 +1667,11 @@ export default function App() {
     conflictWarnedRef.current = signature;
     // 冲突是「需要注意但不阻断」的情形，用 warn 级别而不是普通提示（第九阶段）
     toast.warn(
-      `快捷键冲突：${conflicts
-        .map((c) => `${formatKey(c.key)} → ${c.commands.join('、')}`)
-        .join('；')}（可在「设置 → 快捷键」里改）`,
+      fill(t(APP.shortcutConflicts), {
+        detail: conflicts
+          .map((c) => `${formatKey(c.key)} → ${c.commands.join('、')}`)
+          .join('；'),
+      }),
     );
   }, [bindings]);
 
@@ -1647,7 +1708,7 @@ export default function App() {
               applyTable: handleApplyTable,
               resetSettings: () => {
                 void useSettingsStore.getState().reset();
-                setNotice('已恢复默认设置');
+                setNotice(t(APP.settingsRestored));
               },
             }}
           />
@@ -1694,7 +1755,7 @@ export default function App() {
               onMouseDown={() => focusComparePane('a')}
             >
               <div className="compare-pane-title">
-                {paneRole('a', compare.target)} · {compareTabA.fileName || '未命名'}
+                {paneRole('a', compare.target)} · {compareTabA.fileName || t(APP.unnamed)}
               </div>
               <Editor
                 tab={compareTabA}
@@ -1718,7 +1779,7 @@ export default function App() {
               onMouseDown={() => focusComparePane('b')}
             >
               <div className="compare-pane-title">
-                {paneRole('b', compare.target)} · {compareTabB.fileName || '未命名'}
+                {paneRole('b', compare.target)} · {compareTabB.fileName || t(APP.unnamed)}
               </div>
               <Editor
                 tab={compareTabB}
@@ -1762,8 +1823,8 @@ export default function App() {
             result={diffResult}
             index={diffIndex}
             target={compare.target}
-            aName={compareTabA?.fileName || '未命名'}
-            bName={compareTabB?.fileName || '未命名'}
+            aName={compareTabA?.fileName || t(APP.unnamed)}
+            bName={compareTabB?.fileName || t(APP.unnamed)}
             contentA={compareTabA?.content ?? ''}
             contentB={compareTabB?.content ?? ''}
             onPrev={goPrevDiff}
@@ -1836,10 +1897,10 @@ export default function App() {
           onApply={(step, scope) => {
             if (toolDialog.tabId !== useTabsStore.getState().activeTabId) {
               setToolDialog(null);
-              setError('整理期间切换了标签，已取消本次操作');
+              setError(t(APP.toolTabSwitched));
               return;
             }
-            void runGuarded('整理', async () => {
+            void runGuarded(t(ACTION.tool), async () => {
               await applyToolStep(step, toolDialog.meta.label, scope);
               setToolDialog(null);
             });
@@ -1850,7 +1911,7 @@ export default function App() {
       {compareDialogOpen && activeTab && (
         <CompareDialog
           tabs={tabs.filter((t) => t.id !== activeTab.id)}
-          activeName={activeTab.fileName || '未命名'}
+          activeName={activeTab.fileName || t(APP.unnamed)}
           onStart={handleStartCompare}
           onCancel={() => setCompareDialogOpen(false)}
         />
@@ -1911,7 +1972,7 @@ export default function App() {
           onApply={(text, ambiguities, changedCount) => {
             if (convertDialog.tabId !== useTabsStore.getState().activeTabId) {
               setConvertDialog(null);
-              setError('转换期间切换了标签，已取消本次转换');
+              setError(t(APP.convertTabSwitched));
               return;
             }
             applyConvertResult(

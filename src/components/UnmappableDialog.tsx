@@ -4,6 +4,10 @@
  * 三选：以数字字符引用写出 / 改存 UTF-8（带 BOM）/ 取消。
  */
 import type { UnmappableChar } from '../platform/tauriApi';
+import { useI18n } from '../shared/i18n';
+import { UNMAPPABLE } from '../shared/i18n/dialogs';
+import { COMMON } from '../shared/i18n/common';
+import { fill } from '../shared/i18n/status';
 
 interface UnmappableDialogProps {
   encoding: string;
@@ -15,15 +19,17 @@ interface UnmappableDialogProps {
 const MAX_SHOWN = 12;
 
 export function UnmappableDialog({ encoding, unmappable, onDecide }: UnmappableDialogProps) {
+  const { t } = useI18n();
   const shown = unmappable.slice(0, MAX_SHOWN);
   const rest = unmappable.length - shown.length;
+  // 编码名是用户数据（编码 id 的显示名），只做填充、不过 t
+  const enc = encoding.toUpperCase();
   return (
     <div className="dialog-overlay" role="presentation">
-      <div className="dialog" role="alertdialog" aria-label="存在不可编码字符">
-        <h2 className="dialog-title">无法以 {encoding.toUpperCase()} 编码保存</h2>
+      <div className="dialog" role="alertdialog" aria-label={t(UNMAPPABLE.a11y)}>
+        <h2 className="dialog-title">{fill(t(UNMAPPABLE.title), { encoding: enc })}</h2>
         <p className="dialog-text">
-          文本中有 {unmappable.length} 个字符无法编码为{' '}
-          {encoding.toUpperCase()}：
+          {fill(t(UNMAPPABLE.text), { count: unmappable.length, encoding: enc })}
         </p>
         <div className="dialog-chars">
           {shown.map((u, i) => (
@@ -32,19 +38,18 @@ export function UnmappableDialog({ encoding, unmappable, onDecide }: UnmappableD
               <small>U+{u.character.codePointAt(0)?.toString(16).toUpperCase()}</small>
             </span>
           ))}
-          {rest > 0 && <span className="dialog-char dialog-char-more">…等 {rest} 个</span>}
+          {rest > 0 && (
+            <span className="dialog-char dialog-char-more">
+              {fill(t(UNMAPPABLE.more), { count: rest })}
+            </span>
+          )}
         </div>
-        <p className="dialog-text dialog-hint">
-          按 WHATWG 标准，数字字符引用（&#xNNNN;）以纯文本写出，读回该文件的
-          工具可还原原字；改存 UTF-8 则无此问题。
-        </p>
+        <p className="dialog-text dialog-hint">{t(UNMAPPABLE.hint)}</p>
         <div className="dialog-actions">
-          <button onClick={() => onDecide('charref')}>
-            以数字字符引用保存
-          </button>
-          <button onClick={() => onDecide('toutf8')}>改存 UTF-8（带 BOM）</button>
+          <button onClick={() => onDecide('charref')}>{t(UNMAPPABLE.saveCharref)}</button>
+          <button onClick={() => onDecide('toutf8')}>{t(UNMAPPABLE.saveUtf8)}</button>
           <button className="dialog-cancel" onClick={() => onDecide(null)}>
-            取消
+            {t(COMMON.cancel)}
           </button>
         </div>
       </div>

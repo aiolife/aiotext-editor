@@ -24,6 +24,9 @@ import {
 } from '../platform/tauriApi';
 import type { SearchHighlight } from './Editor';
 import { escapeForFind } from '../shared/findText';
+import { useI18n } from '../shared/i18n';
+import { SEARCH, SEARCH_OPTIONS } from '../shared/i18n/search';
+import { fill } from '../shared/i18n/status';
 
 interface SearchPanelProps {
   /** 当前标签正文（查找/替换的作用对象） */
@@ -56,12 +59,12 @@ interface SearchPanelProps {
 }
 
 const OPTION_ITEMS: { key: keyof RegexOptions; label: string }[] = [
-  { key: 'regex', label: '正则' },
-  { key: 'ignoreNewlines', label: '忽略回车' },
-  { key: 'ignoreHalfSpace', label: '忽略半角空格' },
-  { key: 'ignorePunct', label: '忽略标点' },
-  { key: 'caseInsensitive', label: '忽略大小写' },
-  { key: 'useEscape', label: '使用转义符' },
+  { key: 'regex', label: SEARCH_OPTIONS.regex },
+  { key: 'ignoreNewlines', label: SEARCH_OPTIONS.ignoreNewlines },
+  { key: 'ignoreHalfSpace', label: SEARCH_OPTIONS.ignoreHalfSpace },
+  { key: 'ignorePunct', label: SEARCH_OPTIONS.ignorePunct },
+  { key: 'caseInsensitive', label: SEARCH_OPTIONS.caseInsensitive },
+  { key: 'useEscape', label: SEARCH_OPTIONS.useEscape },
 ];
 
 export function SearchPanel({
@@ -73,6 +76,7 @@ export function SearchPanel({
   onClose,
   external = null,
 }: SearchPanelProps) {
+  const { t } = useI18n();
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
   /** 外部填入查找词后自动查找的序号（0 = 还没被填过） */
@@ -143,7 +147,11 @@ export function SearchPanel({
         setError(null);
         const index = keepIndex && found.length > 0 ? Math.min(active, found.length - 1) : 0;
         publish(found, index);
-        setInfo(found.length === 0 ? '没有命中' : `第 ${index + 1} / ${found.length} 个命中`);
+        setInfo(
+          found.length === 0
+            ? t(SEARCH.noMatch)
+            : fill(t(SEARCH.matchAt), { index: index + 1, total: found.length }),
+        );
       } catch (e) {
         clear();
         setInfo(null);
@@ -152,7 +160,7 @@ export function SearchPanel({
         setBusy(false);
       }
     },
-    [active, clear, content, findText, opts, publish],
+    [active, clear, content, findText, opts, publish, t],
   );
 
   // 替换后正文变化 → 自动按新内容刷新命中（保持当前序号）
@@ -168,9 +176,9 @@ export function SearchPanel({
       if (spans.length === 0) return;
       const index = (active + delta + spans.length) % spans.length;
       publish(spans, index);
-      setInfo(`第 ${index + 1} / ${spans.length} 个命中`);
+      setInfo(fill(t(SEARCH.matchAt), { index: index + 1, total: spans.length }));
     },
-    [active, publish, spans],
+    [active, publish, spans, t],
   );
 
   /**
@@ -250,11 +258,11 @@ export function SearchPanel({
         ? await regexReplaceWithTool(content, findText, opts, { kind: toolId }, active, 1)
         : await regexReplace(content, findText, replaceText, opts, active, 1);
       if (report.count === 0) {
-        setInfo('没有可替换的命中');
+        setInfo(t(SEARCH.nothingToReplace));
         return;
       }
       onApplyEdit(target.start, target.end, report.replacements[0] ?? '');
-      setInfo(toolId ? '已用工具处理 1 处' : '已替换 1 处');
+      setInfo(toolId ? t(SEARCH.processedOne) : t(SEARCH.replacedOne));
       setError(null);
       refreshRef.current = true; // 等新正文回流后刷新命中
     } catch (e) {
@@ -262,7 +270,7 @@ export function SearchPanel({
     } finally {
       setBusy(false);
     }
-  }, [active, content, findText, onApplyEdit, opts, replaceText, spans, toolId]);
+  }, [active, content, findText, onApplyEdit, opts, replaceText, spans, t, toolId]);
 
   /** 全部替换（或对全部命中套用工具） */
   const replaceAll = useCallback(async () => {
@@ -273,19 +281,23 @@ export function SearchPanel({
         ? await regexReplaceWithTool(content, findText, opts, { kind: toolId }, 0, null)
         : await regexReplace(content, findText, replaceText, opts, 0, null);
       if (report.count === 0) {
-        setInfo('没有可替换的命中');
+        setInfo(t(SEARCH.nothingToReplace));
         return;
       }
       onApplyEdit(0, content.length, report.text);
       clear();
-      setInfo(toolId ? `已用工具处理 ${report.count} 处` : `已替换 ${report.count} 处`);
+      setInfo(
+        toolId
+          ? fill(t(SEARCH.processedMany), { count: report.count })
+          : fill(t(SEARCH.replacedMany), { count: report.count }),
+      );
       setError(null);
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, [clear, content, findText, onApplyEdit, opts, replaceText, toolId]);
+  }, [clear, content, findText, onApplyEdit, opts, replaceText, t, toolId]);
 
   /** 在查找框中插入类目写法 */
   const insertCategory = useCallback(
@@ -308,22 +320,22 @@ export function SearchPanel({
   );
 
   const optionSummary = useMemo(() => {
-    const off = OPTION_ITEMS.filter((item) => !opts[item.key]).map((item) => item.label);
-    return off.length > 0 ? `关闭：${off.join('、')}` : '全部开关开启';
-  }, [opts]);
+    const off = OPTION_ITEMS.filter((item) => !opts[item.key]).map((item) => t(item.label));
+    return off.length > 0 ? fill(t(SEARCH.optionsOff), { list: off.join('、') }) : t(SEARCH.optionsAllOn);
+  }, [opts, t]);
 
   return (
     <div className="search-panel" role="search">
       <div className="search-row">
         <label className="search-label" htmlFor="search-find">
-          查找
+          {t(SEARCH.find)}
         </label>
         <input
           id="search-find"
           ref={findRef}
           className="search-input"
           value={findText}
-          placeholder="支持 \c[GBK]、\c[天干]、\a、\d 等中文类目"
+          placeholder={t(SEARCH.findPlaceholder)}
           onChange={(e) => setFindText(e.target.value)}
           // 点过哪个框，正文里选中的文字就往哪个框里送
           onFocus={() => {
@@ -342,13 +354,13 @@ export function SearchPanel({
         <select
           className="search-category"
           value=""
-          title="插入中文类目"
+          title={t(SEARCH.categoryTitle)}
           onChange={(e) => {
             if (e.target.value) insertCategory(e.target.value);
             e.target.value = '';
           }}
         >
-          <option value="">类目…</option>
+          <option value="">{t(SEARCH.categoryPlaceholder)}</option>
           {categories.map((category) => (
             <option key={category.token} value={category.token}>
               {category.label}（{category.sample}）
@@ -359,7 +371,7 @@ export function SearchPanel({
 
       <div className="search-row">
         <label className="search-label" htmlFor="search-replace">
-          替换
+          {t(SEARCH.replace)}
         </label>
         <input
           id="search-replace"
@@ -368,7 +380,7 @@ export function SearchPanel({
           value={replaceText}
           disabled={Boolean(toolId)}
           placeholder={
-            toolId ? '已选择「使用工具」，替换内容由工具生成' : '可用 \\1 或 $1 引用捕获组'
+            toolId ? t(SEARCH.replacePlaceholderWithTool) : t(SEARCH.replacePlaceholder)
           }
           onChange={(e) => setReplaceText(e.target.value)}
           onFocus={() => {
@@ -382,22 +394,22 @@ export function SearchPanel({
           }}
         />
         <label className="search-tool" htmlFor="search-tool">
-          使用工具
+          {t(SEARCH.useTool)}
         </label>
         <select
           id="search-tool"
           className="search-category"
           value={toolId}
-          title="把每个命中交给整理工具处理（F-09）"
+          title={t(SEARCH.useToolTitle)}
           onChange={(e) => setToolId(e.target.value as ToolId | '')}
         >
-          <option value="">（不使用）</option>
+          <option value="">{t(SEARCH.noTool)}</option>
           {tools
             .filter((tool) => !tool.inspectsOnly)
             .map((tool) => (
               <option key={tool.id} value={tool.id}>
-                {tool.label}
-                {tool.hasOptions ? '（默认选项）' : ''}
+                {t(tool.label)}
+                {tool.hasOptions ? t(SEARCH.defaultOptions) : ''}
               </option>
             ))}
         </select>
@@ -411,33 +423,33 @@ export function SearchPanel({
               checked={opts[item.key]}
               onChange={(e) => setOpts((prev) => ({ ...prev, [item.key]: e.target.checked }))}
             />
-            {item.label}
+            {t(item.label)}
           </label>
         ))}
       </div>
 
       <div className="search-actions">
         <button type="button" onClick={() => void runFind(false)} disabled={busy}>
-          查找
+          {t(SEARCH.find)}
         </button>
         <button type="button" onClick={() => step(-1)} disabled={busy || spans.length === 0}>
-          上一个
+          {t(SEARCH.prev)}
         </button>
         <button type="button" onClick={() => step(1)} disabled={busy || spans.length === 0}>
-          下一个
+          {t(SEARCH.next)}
         </button>
         <button
           type="button"
           onClick={() => void replaceCurrent()}
           disabled={busy || spans.length === 0}
         >
-          {toolId ? '处理当前' : '替换'}
+          {toolId ? t(SEARCH.processCurrent) : t(SEARCH.replaceCurrent)}
         </button>
         <button type="button" onClick={() => void replaceAll()} disabled={busy || !findText}>
-          {toolId ? '全部处理' : '全部替换'}
+          {toolId ? t(SEARCH.processAll) : t(SEARCH.replaceAll)}
         </button>
         <button type="button" className="search-close" onClick={onClose}>
-          关闭
+          {t(SEARCH.close)}
         </button>
       </div>
 

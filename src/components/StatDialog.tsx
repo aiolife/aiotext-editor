@@ -3,7 +3,13 @@
  *
  * 三个菜单项要展示的是一组**多行**结果，塞进状态栏的一行提示会挤成一团，
  * 所以统一走这个对话框：`rows` 由调用方按各自的口径算好，这里只负责排版。
+ *
+ * `title` / `subtitle` / `rows` 的文案由调用方（App）传给这里，故统一在这里过一遍
+ * `t`；调用方只需给简体原文，不必自己翻译。
  */
+import { useI18n } from '../shared/i18n';
+import { COMMON } from '../shared/i18n/common';
+
 interface StatRow {
   label: string;
   value: string | number;
@@ -31,26 +37,27 @@ export function StatDialog({
   columns = 1,
   onClose,
 }: StatDialogProps) {
+  const { t } = useI18n();
   return (
     <div className="dialog-overlay" role="presentation">
-      <div className="dialog dialog-wide" role="dialog" aria-label={title}>
-        <h2 className="dialog-title">{title}</h2>
-        {subtitle ? <p className="dialog-text">{subtitle}</p> : null}
+      <div className="dialog dialog-wide" role="dialog" aria-label={t(title)}>
+        <h2 className="dialog-title">{t(title)}</h2>
+        {subtitle ? <p className="dialog-text">{t(subtitle)}</p> : null}
         <dl className={columns === 2 ? 'doc-stats doc-stats-2col' : 'doc-stats'}>
           {rows.map((row) => (
             <div className="doc-stats-row" key={row.label}>
               <dt>
-                {row.label}
-                {row.hint ? <span className="doc-stats-hint">{row.hint}</span> : null}
+                {t(row.label)}
+                {row.hint ? <span className="doc-stats-hint">{t(row.hint)}</span> : null}
               </dt>
               <dd>{row.value}</dd>
             </div>
           ))}
         </dl>
-        {note ? <p className="dialog-text doc-stats-note">{note}</p> : null}
+        {note ? <p className="dialog-text doc-stats-note">{t(note)}</p> : null}
         <div className="dialog-actions">
           <button onClick={onClose} autoFocus>
-            关闭
+            {t(COMMON.close)}
           </button>
         </div>
       </div>

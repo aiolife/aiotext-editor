@@ -16,6 +16,17 @@
 
 import { COMMON } from './common';
 import { MENU_A11Y, MENU_MISC, MENU_TOP } from './menu';
+import { CONFIRM_CLOSE, GOTO, TABBAR, TOOL_MENU, UNMAPPABLE } from './dialogs';
+import { CONVERT } from './convert';
+import { HELP } from './help';
+import { COMPARE } from './compare';
+import { SEARCH, SEARCH_OPTIONS } from './search';
+import { MERGE } from './merge';
+import { REPLACE_RULES, REPLACE_TABLE } from './replace';
+import { BATCH } from './batch';
+import { TOOL_OPTIONS } from './tools';
+import { ACTION, APP, STATS_DOC, STATS_PARA, STATS_WORD } from './app';
+import { toolFieldTexts } from '../toolFields';
 import { COMMANDS } from '../shortcuts';
 import { LANG_OPTIONS } from './index';
 import {
@@ -50,6 +61,26 @@ export const MESSAGE_GROUPS = {
   SETTINGS_COMPARE,
   SETTINGS_SHORTCUTS,
   SETTINGS_FOOTER,
+  GOTO,
+  CONFIRM_CLOSE,
+  UNMAPPABLE,
+  TABBAR,
+  TOOL_MENU,
+  CONVERT,
+  HELP,
+  COMPARE,
+  SEARCH_OPTIONS,
+  SEARCH,
+  MERGE,
+  REPLACE_RULES,
+  REPLACE_TABLE,
+  BATCH,
+  TOOL_OPTIONS,
+  ACTION,
+  APP,
+  STATS_DOC,
+  STATS_WORD,
+  STATS_PARA,
 } as const;
 
 /** `COMMANDS` 里的命令名与分组名（动态文本，同样参与转换） */
@@ -90,6 +121,7 @@ export function allSimplifiedTexts(): string[] {
     }
   }
   for (const text of commandTexts()) out.add(text);
+  for (const text of toolFieldTexts()) out.add(text);
   for (const options of OPTION_TEXTS) {
     for (const option of options) {
       if (option.label) out.add(option.label);
