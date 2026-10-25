@@ -43,6 +43,7 @@ import {
 import { indentUnit } from '@codemirror/language';
 import type { EditorTab } from '../store/tabsStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { type VRect, nextColRect, nextRowRect } from '../shared/columnRect';
 
 /** 外部发起的文档替换（如「简繁转换」写入整篇或选区） */
 export interface PendingEdit {
@@ -369,17 +370,9 @@ function updateTimestamp(view: EditorView): void {
  * （`allowMultipleSelections` 默认关闭，见下方 extensions 里的注释）原生那条路
  * 一直是通的，所以改回来用官方实现。
  *
- * 矩形内部用「起始行 / 结束行 / 起始列 / 结束列」四个数表示，而不是存一堆
- * selected range：微调都是在这四个数上做加减，来回换算会丢信息。
- * `colEnd === colStart` 表示**零宽**——多行同一列的多个光标（还没选中内容）。
+ * 矩形模型与增减计算在 `shared/columnRect.ts`（纯算术、有单测覆盖），这里只管
+ * 把它和 CodeMirror 的选区对上。
  */
-interface VRect {
-  startLine: number;
-  endLine: number;
-  colStart: number;
-  colEnd: number;
-}
-
 const setColumnMode = StateEffect.define<boolean>();
 const setVRect = StateEffect.define<VRect | null>();
 
@@ -475,19 +468,20 @@ function exitColumnMode(view: EditorView): void {
 function expandColumn(view: EditorView, delta: number): boolean {
   const rect = view.state.field(vRectField, false);
   if (!rect) return false;
-  applyRect(view, { ...rect, colEnd: Math.max(rect.colStart, rect.colEnd + delta) });
+  applyRect(view, nextColRect(rect, delta));
   return true;
 }
 
-/** 纵向扩展：向上加上一行 / 向下加下一行 */
+/**
+ * 纵向增减：`Ctrl+↓` 向下加一行、`Ctrl+↑` 从底边收回一行。
+ *
+ * 算术本身在 `nextRowRect`（含为什么要「收」的完整说明与单测），这里只负责
+ * 取当前矩形、问文档总行数、把结果落下。
+ */
 function expandRow(view: EditorView, upward: boolean): boolean {
   const rect = view.state.field(vRectField, false);
   if (!rect) return false;
-  const maxLine = view.state.doc.lines;
-  const next = upward
-    ? { ...rect, startLine: Math.max(1, rect.startLine - 1) }
-    : { ...rect, endLine: Math.min(maxLine, rect.endLine + 1) };
-  applyRect(view, next);
+  applyRect(view, nextRowRect(rect, upward, view.state.doc.lines));
   return true;
 }
 
