@@ -214,6 +214,38 @@ pub struct Settings {
     /// 想要这个提速的用户自己在设置里打开。开启后由 `tray` 模块提供唤回与
     /// 真正退出的入口——没有那个入口，隐藏就等于把窗口弄丢了。
     pub hide_on_close: bool,
+    /// 界面语言（PRD §3.6）。繁體文案不是人工翻译的，是本进程用 OpenCC
+    /// `s2twp` 对简体文案现转的，所以这里只存「要不要转」。
+    pub language: UiLang,
+}
+
+/// 界面语言（PRD §3.6）
+///
+/// 只有两种：简体（默认）与繁體。**不做英文界面**——专业术语翻译质量不可控，
+/// 且英文译文普遍长于中文会撑破现有按钮与菜单布局（PRD §3.6 开头有完整理由）。
+///
+/// `Unknown` 是反序列化兜底：老版本 / 手改过的 `settings.json` 里若出现别的
+/// 值，**不能让整个文件解析失败**（那会连累字体、快捷键等全部回到默认），
+/// 而是落到这里、由 [`sanitize`] 修回 `Zh`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum UiLang {
+    /// 简体中文（默认）
+    #[default]
+    #[serde(rename = "zh")]
+    Zh,
+    /// 繁體中文（`s2twp`，含台湾惯用词）
+    #[serde(rename = "zh-Hant")]
+    ZhHant,
+    /// 未识别的值：解析不报错，交给 `sanitize` 纠正
+    #[serde(other)]
+    Unknown,
+}
+
+impl UiLang {
+    /// 是否要输出繁體
+    pub fn is_traditional(self) -> bool {
+        matches!(self, UiLang::ZhHant)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +263,10 @@ pub fn sanitize(mut s: Settings) -> Settings {
         family.to_owned()
     };
     s.editor.tab_width = s.editor.tab_width.clamp(TAB_WIDTH_MIN, TAB_WIDTH_MAX);
+    // 未识别的语言值退回简体，而不是让整份设置失效
+    if s.language == UiLang::Unknown {
+        s.language = UiLang::Zh;
+    }
     s.shortcuts = clean_shortcuts(std::mem::take(&mut s.shortcuts));
     s
 }
@@ -322,6 +358,11 @@ pub fn load_from(path: &Path) -> Settings {
         hide_on_close: incoming
             .get("hideOnClose")
             .and_then(serde_json::Value::as_bool)
+            .unwrap_or_default(),
+        // 语言同理：认不出的值由 sanitize 兜回简体，不必在这里重复判断
+        language: incoming
+            .get("language")
+            .and_then(|v| serde_json::from_value::<UiLang>(v.clone()).ok())
             .unwrap_or_default(),
     };
     tracing::warn!(

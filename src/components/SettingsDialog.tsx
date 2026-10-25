@@ -42,15 +42,27 @@ import {
   reservedReason,
   resolveBindings,
 } from '../shared/shortcuts';
+import { useI18n, LANG_OPTIONS } from '../shared/i18n';
+import {
+  SETTINGS_APPEARANCE,
+  SETTINGS_COMPARE,
+  SETTINGS_CONVERSION,
+  SETTINGS_EDITOR,
+  SETTINGS_FOOTER,
+  SETTINGS_SHORTCUTS,
+  SETTINGS_TABS,
+} from '../shared/i18n/settings';
+import { fill } from '../shared/i18n/status';
 
 export type SettingsTab = 'appearance' | 'editor' | 'conversion' | 'compare' | 'shortcuts';
 
-const TABS: { id: SettingsTab; label: string }[] = [
-  { id: 'appearance', label: '外观' },
-  { id: 'editor', label: '编辑器' },
-  { id: 'conversion', label: '转换' },
-  { id: 'compare', label: '比较' },
-  { id: 'shortcuts', label: '快捷键' },
+/** tab 名：key 与 `SettingsTab` 一致，渲染时过一遍 `t` */
+const TABS: { id: SettingsTab; key: keyof typeof SETTINGS_TABS }[] = [
+  { id: 'appearance', key: 'appearance' },
+  { id: 'editor', key: 'editor' },
+  { id: 'conversion', key: 'conversion' },
+  { id: 'compare', key: 'compare' },
+  { id: 'shortcuts', key: 'shortcuts' },
 ];
 
 interface SettingsDialogProps {
@@ -82,6 +94,7 @@ function Row({
 }
 
 export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }: SettingsDialogProps) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<SettingsTab>(initialTab);
   const settings = useSettingsStore((s) => s.settings);
   const saving = useSettingsStore((s) => s.saving);
@@ -182,16 +195,17 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
         <h2 className="dialog-title">选项</h2>
 
         <div className="settings-tabs" role="tablist">
-          {TABS.map((t) => (
+          {/* 形参叫 `tb` 不叫 `t`：后者是翻译函数，遮蔽了会让整段文案静默退回简体 */}
+          {TABS.map((tb) => (
             <button
-              key={t.id}
+              key={tb.id}
               type="button"
               role="tab"
-              aria-selected={tab === t.id}
-              className={tab === t.id ? 'settings-tab is-active' : 'settings-tab'}
-              onClick={() => setTab(t.id)}
+              aria-selected={tab === tb.id}
+              className={tab === tb.id ? 'settings-tab is-active' : 'settings-tab'}
+              onClick={() => setTab(tb.id)}
             >
-              {t.label}
+              {t(SETTINGS_TABS[tb.key])}
             </button>
           ))}
         </div>
@@ -199,7 +213,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
         <div className="dialog-body settings-body">
           {tab === 'appearance' ? (
             <>
-              <Row label="正文字体" hint="CSS font-family；作用于文档正文，界面文字保持系统字体">
+              <Row label={t(SETTINGS_APPEARANCE.bodyFont)} hint={t(SETTINGS_APPEARANCE.bodyFontHint)}>
                 <input
                   type="text"
                   className="settings-input-wide"
@@ -211,7 +225,13 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="正文字号" hint={`${FONT_SIZE_RANGE.min} – ${FONT_SIZE_RANGE.max} px`}>
+              <Row
+                label={t(SETTINGS_APPEARANCE.fontSize)}
+                hint={fill(t(SETTINGS_APPEARANCE.fontSizeHint), {
+                  min: FONT_SIZE_RANGE.min,
+                  max: FONT_SIZE_RANGE.max,
+                })}
+              >
                 <input
                   type="range"
                   min={FONT_SIZE_RANGE.min}
@@ -236,7 +256,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="主题" hint="本项目配色建立在 CSS 系统色之上，故切换主题 = 切 color-scheme">
+              <Row label={t(SETTINGS_APPEARANCE.theme)} hint={t(SETTINGS_APPEARANCE.themeHint)}>
                 <select
                   value={settings.appearance.theme}
                   onChange={(e) =>
@@ -250,12 +270,28 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 >
                   {THEME_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </option>
                   ))}
                 </select>
               </Row>
-              <Row label="显示行号">
+              {/* 多语言（PRD §3.6）：与主题、字体同在「外观」tab，不新增 tab */}
+              <Row
+                label={t(SETTINGS_APPEARANCE.language)}
+                hint={t(SETTINGS_APPEARANCE.languageHint)}
+              >
+                <select
+                  value={settings.language}
+                  onChange={(e) => update({ language: e.target.value as typeof settings.language })}
+                >
+                  {LANG_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {t(o.label)}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+              <Row label={t(SETTINGS_APPEARANCE.showLineNumber)}>
                 <input
                   type="checkbox"
                   checked={settings.appearance.showLineNumber}
@@ -266,7 +302,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="显示菜单栏">
+              <Row label={t(SETTINGS_APPEARANCE.showMenubar)}>
                 <input
                   type="checkbox"
                   checked={settings.appearance.showToolbar}
@@ -277,7 +313,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="显示状态栏">
+              <Row label={t(SETTINGS_APPEARANCE.showStatusBar)}>
                 <input
                   type="checkbox"
                   checked={settings.appearance.showStatusBar}
@@ -289,8 +325,8 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 />
               </Row>
               <Row
-                label="关闭窗口时隐藏到托盘"
-                hint="开启后关闭窗口不再退出程序，下次打开几乎瞬时（实测 748ms → 约 100ms）；代价是程序会继续常驻并占用约 300MB 内存。开启后托盘图标会亮起，可用来唤回窗口或真正退出"
+                label={t(SETTINGS_APPEARANCE.hideOnClose)}
+                hint={t(SETTINGS_APPEARANCE.hideOnCloseHint)}
               >
                 <input
                   type="checkbox"
@@ -304,8 +340,11 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
           {tab === 'editor' ? (
             <>
               <Row
-                label="缩进宽度"
-                hint={`${TAB_WIDTH_RANGE.min} – ${TAB_WIDTH_RANGE.max} 个空格宽度`}
+                label={t(SETTINGS_EDITOR.tabWidth)}
+                hint={fill(t(SETTINGS_EDITOR.tabWidthHint), {
+                  min: TAB_WIDTH_RANGE.min,
+                  max: TAB_WIDTH_RANGE.max,
+                })}
               >
                 <input
                   type="number"
@@ -318,7 +357,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="用空格代替制表符" hint="关闭后按 Tab 插入真正的制表符">
+              <Row
+                label={t(SETTINGS_EDITOR.insertSpaces)}
+                hint={t(SETTINGS_EDITOR.insertSpacesHint)}
+              >
                 <input
                   type="checkbox"
                   checked={settings.editor.insertSpaces}
@@ -327,7 +369,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="自动换行">
+              <Row label={t(SETTINGS_EDITOR.wrap)}>
                 <input
                   type="checkbox"
                   checked={settings.editor.wrap}
@@ -335,7 +377,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 />
               </Row>
               {/* 不可见字符：校对用。画出来的是 decoration（提示符号），不进文档 */}
-              <Row label="显示空格字符" hint="空格画 ·，制表符画 →">
+              <Row label={t(SETTINGS_EDITOR.showSpaces)} hint={t(SETTINGS_EDITOR.showSpacesHint)}>
                 <input
                   type="checkbox"
                   checked={settings.appearance.showSpaces}
@@ -346,7 +388,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="显示行尾字符" hint="有换行的行尾画 ¬">
+              <Row
+                label={t(SETTINGS_EDITOR.showLineEnds)}
+                hint={t(SETTINGS_EDITOR.showLineEndsHint)}
+              >
                 <input
                   type="checkbox"
                   checked={settings.appearance.showLineEnds}
@@ -357,7 +402,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="显示换段符" hint="段落的最后一行画 ¶（优先于行尾符）">
+              <Row
+                label={t(SETTINGS_EDITOR.showParagraphMarks)}
+                hint={t(SETTINGS_EDITOR.showParagraphMarksHint)}
+              >
                 <input
                   type="checkbox"
                   checked={settings.appearance.showParagraphMarks}
@@ -368,7 +416,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="默认编码" hint="打开无 BOM 文件时的探测偏好、另存为的初值">
+              <Row
+                label={t(SETTINGS_EDITOR.defaultEncoding)}
+                hint={t(SETTINGS_EDITOR.defaultEncodingHint)}
+              >
                 <select
                   value={settings.editor.defaultEncoding}
                   onChange={(e) =>
@@ -379,12 +430,12 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 >
                   {ENCODING_OR_AUTO_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </option>
                   ))}
                 </select>
               </Row>
-              <Row label="默认行尾">
+              <Row label={t(SETTINGS_EDITOR.defaultLineEnding)}>
                 <select
                   value={settings.editor.defaultLineEnding}
                   onChange={(e) =>
@@ -398,7 +449,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 >
                   {LINE_ENDING_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </option>
                   ))}
                 </select>
@@ -408,7 +459,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
 
           {tab === 'conversion' ? (
             <>
-              <Row label="括号转换跳过" hint="「匹配括号 / 括号嵌套转换」要跳过的括号对，例如 []">
+              <Row
+                label={t(SETTINGS_CONVERSION.bracketSkip)}
+                hint={t(SETTINGS_CONVERSION.bracketSkipHint)}
+              >
                 <input
                   type="text"
                   className="settings-input-wide"
@@ -420,7 +474,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="转换后保留原文" hint="转换对话框里「保留原文以便对照」的默认勾选状态">
+              <Row
+                label={t(SETTINGS_CONVERSION.preserveConverted)}
+                hint={t(SETTINGS_CONVERSION.preserveConvertedHint)}
+              >
                 <input
                   type="checkbox"
                   checked={settings.conversion.preserveConverted}
@@ -436,7 +493,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
 
           {tab === 'compare' ? (
             <>
-              <Row label="忽略换行">
+              <Row label={t(SETTINGS_COMPARE.ignoreNewlines)}>
                 <input
                   type="checkbox"
                   checked={settings.compare.ignoreNewlines}
@@ -445,7 +502,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="忽略半角空格">
+              <Row label={t(SETTINGS_COMPARE.ignoreHalfSpace)}>
                 <input
                   type="checkbox"
                   checked={settings.compare.ignoreHalfSpace}
@@ -454,7 +511,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="忽略全角标点">
+              <Row label={t(SETTINGS_COMPARE.ignoreFullPunct)}>
                 <input
                   type="checkbox"
                   checked={settings.compare.ignoreFullPunct}
@@ -463,7 +520,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="忽略半角标点">
+              <Row label={t(SETTINGS_COMPARE.ignoreHalfPunct)}>
                 <input
                   type="checkbox"
                   checked={settings.compare.ignoreHalfPunct}
@@ -472,7 +529,10 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                   }
                 />
               </Row>
-              <Row label="异体字等同强度" hint="fc1 / fc2 组表；影响「相同」的判定范围">
+              <Row
+                label={t(SETTINGS_COMPARE.variantStrictness)}
+                hint={t(SETTINGS_COMPARE.variantStrictnessHint)}
+              >
                 <select
                   value={settings.compare.variantStrictness}
                   onChange={(e) =>
@@ -486,7 +546,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 >
                   {VARIANT_STRICTNESS_OPTIONS.map((o) => (
                     <option key={o.value} value={o.value}>
-                      {o.label}
+                      {t(o.label)}
                     </option>
                   ))}
                 </select>
@@ -496,14 +556,11 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
 
           {tab === 'shortcuts' ? (
             <div className="settings-shortcuts">
-              <p className="dialog-hint">
-                点「录制」后按下组合键即可改绑；<kbd>Esc</kbd> 取消录制。「清除」表示显式解绑
-                （与「用默认」不同）。
-              </p>
+              <p className="dialog-hint">{t(SETTINGS_SHORTCUTS.hint)}</p>
               {captureHint ? <p className="settings-warn">{captureHint}</p> : null}
               {conflicts.length > 0 ? (
                 <p className="settings-warn">
-                  存在 {conflicts.length} 处键位冲突：
+                  {fill(t(SETTINGS_SHORTCUTS.conflicts), { count: conflicts.length })}
                   {conflicts.map((c) => `${formatKey(c.key, mac)}（${c.commands.join('、')}）`).join('；')}
                 </p>
               ) : null}
@@ -521,17 +578,19 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                         className={clashing ? 'settings-shortcut-row is-clashing' : 'settings-shortcut-row'}
                         data-command={cmd.id}
                       >
-                        <span className="settings-shortcut-label">{cmd.label}</span>
+                        <span className="settings-shortcut-label">{t(cmd.label)}</span>
                         <span className="settings-shortcut-key">
                           {isCapturing ? (
-                            <em className="settings-capturing">按下组合键…</em>
+                            <em className="settings-capturing">{t(SETTINGS_SHORTCUTS.capturing)}</em>
                           ) : key ? (
                             formatKey(key, mac)
                           ) : (
-                            <em className="settings-unbound">（未绑定）</em>
+                            <em className="settings-unbound">{t(SETTINGS_SHORTCUTS.unbound)}</em>
                           )}
                           {binding?.source === 'custom' ? (
-                            <small className="settings-custom-badge">自定义</small>
+                            <small className="settings-custom-badge">
+                              {t(SETTINGS_SHORTCUTS.customBadge)}
+                            </small>
                           ) : null}
                         </span>
                         <span className="settings-shortcut-actions">
@@ -543,7 +602,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                               setCapturing(isCapturing ? null : cmd.id);
                             }}
                           >
-                            {isCapturing ? '取消' : '录制'}
+                            {isCapturing ? t(SETTINGS_SHORTCUTS.cancel) : t(SETTINGS_SHORTCUTS.record)}
                           </button>
                           <button
                             type="button"
@@ -551,7 +610,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                             disabled={key === null && binding?.source === 'unbound'}
                             onClick={() => unbind(cmd.id)}
                           >
-                            清除
+                            {t(SETTINGS_SHORTCUTS.clear)}
                           </button>
                           <button
                             type="button"
@@ -559,7 +618,7 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                             disabled={binding?.source === 'default'}
                             onClick={() => restoreDefault(cmd.id)}
                           >
-                            默认
+                            {t(SETTINGS_SHORTCUTS.restoreDefault)}
                           </button>
                         </span>
                       </div>
@@ -576,9 +635,9 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
             {saveError ? (
               <span className="dialog-error">{saveError}</span>
             ) : saving ? (
-              '正在保存…'
+              t(SETTINGS_FOOTER.saving)
             ) : (
-              '改动立即生效并自动保存'
+              t(SETTINGS_FOOTER.autoSave)
             )}
           </span>
           <div className="dialog-actions">
@@ -586,13 +645,13 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
               type="button"
               onClick={() => {
                 void reset();
-                onNotice('已恢复默认设置');
+                onNotice(t(SETTINGS_FOOTER.resetNotice));
               }}
             >
-              恢复全部默认
+              {t(SETTINGS_FOOTER.resetAll)}
             </button>
             <button type="button" className="dialog-primary" onClick={close}>
-              关闭
+              {t(SETTINGS_FOOTER.close)}
             </button>
           </div>
         </div>

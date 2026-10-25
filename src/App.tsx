@@ -24,6 +24,9 @@ import { useTabsStore, type EditorTab, type SaveDecision } from './store/tabsSto
 import { useSettingsStore } from './store/settingsStore';
 import { countOccurrences, countTextStats } from './shared/textStats';
 import { toast } from './store/toastStore';
+import { LanguageProvider, type TraditionalMap } from './shared/i18n';
+import { allSimplifiedTexts } from './shared/i18n/messages';
+import { uiTextsToTraditional } from './platform/tauriApi';
 import { ToastHost } from './components/ToastHost';
 import type { SettingsTab } from './components/SettingsDialog';
 import {
@@ -501,6 +504,35 @@ export default function App() {
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  // ---------- 界面多语言（PRD §3.6） ----------
+
+  const language = useSettingsStore((s) => s.settings.language);
+  /**
+   * 「简体原文 → 繁體」映射。启动时**一次性**取回（后端首次调 OpenCC 要展开
+   * 内嵌词典，有几十毫秒开销），之后切语言只是换查表对象，渲染期不再走 IPC。
+   */
+  const [traditionalMap, setTraditionalMap] = useState<TraditionalMap | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const texts = allSimplifiedTexts();
+    uiTextsToTraditional(texts)
+      .then((converted) => {
+        if (cancelled) return;
+        // 按位置配对：后端返回的是与入参一一对应的数组
+        const map = new Map<string, string>();
+        texts.forEach((text, i) => map.set(text, converted[i] ?? text));
+        setTraditionalMap(map);
+      })
+      .catch(() => {
+        // 拿不到繁體就继续用简体——界面语言不该让用户开不了编辑器
+        if (!cancelled) setTraditionalMap(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
 
   /**
@@ -1582,7 +1614,7 @@ export default function App() {
     );
   }, [bindings]);
 
-  return (
+  const shell = (
     <div className="app-shell">
       <header className="app-header">
         {/* 纯文字菜单栏（PRD v0.4 §3.5）：品牌名不再占位——窗口标题栏已有，重复一遍只是噪音 */}
@@ -1898,5 +1930,12 @@ export default function App() {
       {/* 全局提示队列（第九阶段）：挂在根部，z-index 高于对话框遮罩 */}
       <ToastHost />
     </div>
+  );
+
+  // 语言 Provider 必须包住整棵树：菜单栏、状态栏、各个对话框都要读它
+  return (
+    <LanguageProvider lang={language} map={traditionalMap}>
+      {shell}
+    </LanguageProvider>
   );
 }

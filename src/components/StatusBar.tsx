@@ -7,6 +7,8 @@
 import { useDeferredValue, useMemo } from 'react';
 import type { EditorTab } from '../store/tabsStore';
 import { countTextStats, type TextStats } from '../shared/textStats';
+import { useI18n } from '../shared/i18n';
+import { STATUS, fill } from '../shared/i18n/status';
 
 interface StatusBarProps {
   tab: EditorTab | null;
@@ -33,37 +35,46 @@ function useFullTextStats(content: string): TextStats {
 }
 
 export function StatusBar({ tab, columnRect }: StatusBarProps) {
+  const { t } = useI18n();
   // hook 不能放在下面的提前 return 之后，所以先按可能为空的内容取出来
   const stats = useFullTextStats(tab?.content ?? '');
   if (!tab) {
     return (
       <footer className="app-statusbar">
-        <span>就绪</span>
+        <span>{t(STATUS.ready)}</span>
       </footer>
     );
   }
   return (
     <footer className="app-statusbar">
-      <span title={tab.filePath ?? '尚未保存到磁盘'}>{tab.filePath ?? '未保存'}</span>
-      <span>编码：{tab.encoding.toUpperCase()}</span>
-      <span>行尾：{tab.lineEnding.toUpperCase()}</span>
-      <span>BOM：{tab.hadBom ? '有' : '无'}</span>
-      <span>
-        行 {tab.cursorLine}，列 {tab.cursorColumn}
+      <span title={tab.filePath ?? t(STATUS.notSavedToDisk)}>
+        {tab.filePath ?? t(STATUS.unsavedShort)}
       </span>
+      <span>{fill(t(STATUS.encoding), { value: tab.encoding.toUpperCase() })}</span>
+      <span>{fill(t(STATUS.lineEnding), { value: tab.lineEnding.toUpperCase() })}</span>
+      <span>{fill(t(STATUS.bom), { value: tab.hadBom ? t(STATUS.yes) : t(STATUS.no) })}</span>
+      <span>{fill(t(STATUS.rowCol), { line: tab.cursorLine, col: tab.cursorColumn })}</span>
       {columnRect && (
-        <span className="statusbar-column" title="垂直选择（列编辑）模式，Ctrl+Shift+F8 退出">
-          垂直选择 {columnRect.rows} 行 × {columnRect.cols} 列
+        <span className="statusbar-column" title={t(STATUS.columnHint)}>
+          {fill(t(STATUS.columnSize), { rows: columnRect.rows, cols: columnRect.cols })}
         </span>
       )}
       <span
         className="statusbar-right"
-        title={`汉字 ${stats.chineseChars} · 单词 ${stats.words} · ${stats.bytes} 字节（UTF-8）`}
+        title={fill(t(STATUS.statsTitle), {
+          chinese: stats.chineseChars,
+          words: stats.words,
+          bytes: stats.bytes,
+        })}
       >
         {/* 顺序与「视图 → 字数统计」里的一致；标题里放一份带单位的完整说明 */}
-        汉字 {stats.chineseChars} · 单词 {stats.words} · {stats.bytes} 字节
+        {fill(t(STATUS.stats), {
+          chinese: stats.chineseChars,
+          words: stats.words,
+          bytes: stats.bytes,
+        })}
       </span>
-      {tab.dirty && <span className="statusbar-dirty">● 未保存</span>}
+      {tab.dirty && <span className="statusbar-dirty">{t(STATUS.dirty)}</span>}
     </footer>
   );
 }

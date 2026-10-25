@@ -89,6 +89,7 @@ pub fn run() {
             commands::convert::list_opencc_directions,
             commands::convert::convert_opencc,
             commands::convert::preview_convert,
+            commands::convert::ui_texts_to_traditional,
             commands::replace::list_replace_tables,
             commands::replace::load_replace_table,
             commands::replace::save_replace_table,

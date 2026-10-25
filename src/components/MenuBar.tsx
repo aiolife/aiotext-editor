@@ -18,6 +18,8 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { commandById, formatKey } from '../shared/shortcuts';
+import { useI18n } from '../shared/i18n';
+import { MENU_A11Y, MENU_MISC, MENU_TOP } from '../shared/i18n/menu';
 import { ENCODING_CONVERT_TARGETS, REOPEN_ENCODINGS } from '../platform/tauriApi';
 import type {
   AppearanceSettings,
@@ -99,6 +101,7 @@ export function MenuBar({
   compareDisabled,
   actions,
 }: MenuBarProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState<string | null>(null);
   /** 当前展开的二级菜单（键为 submenuItem 的 key） */
   const [subOpen, setSubOpen] = useState<string | null>(null);
@@ -143,7 +146,8 @@ export function MenuBar({
   /** 命令项：标签 / 键位 / 可用性全部现取，不写死 */
   const commandItem = (id: string, labelOverride?: string, hint?: string) => {
     const handler = handlers[id];
-    const label = labelOverride ?? commandById(id)?.label ?? id;
+    // 命令名来自 `COMMANDS`，那份数据已参与批量转繁體，这里过一遍 t 即可
+    const label = labelOverride ?? t(commandById(id)?.label ?? id);
     return (
       <button
         key={id}
@@ -163,6 +167,7 @@ export function MenuBar({
   /** 勾选型命令（菜单栏 / 状态栏 / 行号）；`hint` 是鼠标悬停时的用法说明 */
   const checkItem = (id: string, label: string, checked: boolean, hint?: string) => {
     const handler = handlers[id];
+    const labelText = t(label);
     return (
       <button
         key={id}
@@ -177,7 +182,7 @@ export function MenuBar({
         <span className="menu-item-check" aria-hidden="true">
           {checked ? '✓' : ''}
         </span>
-        <span className="menu-item-label">{label}</span>
+        <span className="menu-item-label">{labelText}</span>
         <span className="menu-item-more">{accelOf(id) ?? ''}</span>
       </button>
     );
@@ -465,7 +470,7 @@ export function MenuBar({
       {commandItem('settings.open')}
       {commandItem('settings.shortcuts')}
       <div className="menu-sep" />
-      {plainItem('reset-settings', '恢复默认设置', true, actions.resetSettings)}
+      {plainItem('reset-settings', t(MENU_MISC.resetSettings), true, actions.resetSettings)}
     </>
   );
 
@@ -474,17 +479,17 @@ export function MenuBar({
   const helpMenu = <>{commandItem('help.open')}</>;
 
   const menus: { id: string; label: string; panel: React.ReactNode; wide?: boolean }[] = [
-    { id: 'file', label: '文件', panel: fileMenu },
-    { id: 'edit', label: '编辑', panel: editMenu },
-    { id: 'convert', label: '简繁', panel: convertMenu },
+    { id: 'file', label: t(MENU_TOP.file), panel: fileMenu },
+    { id: 'edit', label: t(MENU_TOP.edit), panel: editMenu },
+    { id: 'convert', label: t(MENU_TOP.convert), panel: convertMenu },
     // 排版菜单放 5 个排版工具 + 常用项，是最长的一个 → 限高滚动
-    { id: 'layout', label: '排版', panel: layoutMenu, wide: true },
-    { id: 'view', label: '视图', panel: viewMenu },
-    { id: 'help', label: '帮助', panel: helpMenu },
+    { id: 'layout', label: t(MENU_TOP.layout), panel: layoutMenu, wide: true },
+    { id: 'view', label: t(MENU_TOP.view), panel: viewMenu },
+    { id: 'help', label: t(MENU_TOP.help), panel: helpMenu },
   ];
 
   return (
-    <nav className="menubar" ref={rootRef} aria-label="主菜单">
+    <nav className="menubar" ref={rootRef} aria-label={t(MENU_A11Y.mainMenu)}>
       {menus.map((menu) => (
         <div className="menu-root" key={menu.id}>
           <button

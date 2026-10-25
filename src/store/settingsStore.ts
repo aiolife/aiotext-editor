@@ -58,6 +58,8 @@ export const DEFAULT_SETTINGS: Settings = {
   shortcuts: {},
   // 默认关闭：保持「关闭即退出」，不常驻内存（与后端 `Settings::default()` 一致）
   hideOnClose: false,
+  // 界面语言：默认简体中文（PRD §3.6）
+  language: 'zh',
 };
 
 interface SettingsState {
@@ -112,6 +114,8 @@ function readCache(): Settings {
       compare: { ...DEFAULT_SETTINGS.compare, ...saved.compare },
       shortcuts: saved.shortcuts ?? {},
       hideOnClose: saved.hideOnClose ?? false,
+      // 顶层字段，`...saved` 已能覆盖；显式写一份是为了让「设置结构」在这里一眼看全
+      language: saved.language ?? DEFAULT_SETTINGS.language,
     };
   } catch {
     return DEFAULT_SETTINGS;

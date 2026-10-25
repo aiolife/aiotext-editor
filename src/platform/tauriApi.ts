@@ -1091,6 +1091,16 @@ export interface Settings {
    * 作为唤回窗口与真正退出的入口。
    */
   hideOnClose: boolean;
+  /**
+   * 界面语言（PRD §3.6）。
+   *
+   * `zh` = 简体中文（默认）、`zh-Hant` = 繁體中文。繁體文案由后端对简体文案跑
+   * OpenCC `s2twp` 生成，**不维护翻译文件**。
+   *
+   * 放在**顶层**而不是 `appearance` 里：它不属于「外观」，且后端要在启动时
+   * 单独读它（决定要不要预生成繁體文案表）。
+   */
+  language: 'zh' | 'zh-Hant';
 }
 
 /** 字号可调区间（F-11 §11.1 / UI §五） */
@@ -1116,6 +1126,19 @@ export async function settingsSave(settings: Settings): Promise<Settings> {
 /** 恢复默认：删除 `settings.json`（含 `.bad` / `.tmp` 残留），返回默认值 */
 export async function settingsReset(): Promise<Settings> {
   return invoke<Settings>('settings_reset');
+}
+
+/**
+ * 批量把界面文案转成繁體（PRD §3.6）。
+ *
+ * 只在**启动时调一次**：后端首次调 OpenCC 要展开内嵌词典，有几十毫秒的开销，
+ * 之后池化复用。返回与入参**一一对应**（按位置配对），前端据此建成
+ * 「原文 → 繁體」映射后缓存，切语言时查表、渲染期不再走 IPC。
+ *
+ * 传进来的必须是**界面文案**，绝不能是用户文档内容——见 PRD L-3。
+ */
+export async function uiTextsToTraditional(texts: string[]): Promise<string[]> {
+  return invoke<string[]>('ui_texts_to_traditional', { texts });
 }
 
 // ---------------------------------------------------------------------------
