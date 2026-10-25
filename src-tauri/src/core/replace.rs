@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use aho_corasick::{AhoCorasickBuilder, MatchKind};
 use serde::{Deserialize, Serialize};
 
+use super::ui_lang;
+
 use crate::error::{AppError, AppResult};
 
 /// 表文件扩展名
@@ -354,10 +356,13 @@ fn structural_issues(
     for (index, entry) in entries.iter().enumerate() {
         let ordinal = index + 1;
         if entry.candidates.is_empty() {
+            // 这些 message 直接展示在「替换表管理」的问题列表里，是界面文案；
+            // 但 `{candidate}` 是用户写的词条（PRD §3.6 L-3：不得翻译），故整条一起
+            // 转——OpenCC 对 ASCII、以及本就是繁體的内容都是幂等的，不会误伤。
             let message = if entry.pattern.is_empty() && !entry.replacement.trim().is_empty() {
-                format!("第 {ordinal} 条缺少 `=`（裸文本无法作为替换规则）")
+                ui_lang::t(&format!("第 {ordinal} 条缺少 `=`（裸文本无法作为替换规则）"))
             } else {
-                format!("第 {ordinal} 条 `=` 左侧为空")
+                ui_lang::t(&format!("第 {ordinal} 条 `=` 左侧为空"))
             };
             out.push((index, IssueSeverity::Error, message));
             continue;
@@ -366,7 +371,7 @@ fn structural_issues(
             out.push((
                 index,
                 IssueSeverity::Error,
-                format!("第 {ordinal} 条 `=` 右侧为空"),
+                ui_lang::t(&format!("第 {ordinal} 条 `=` 右侧为空")),
             ));
             continue;
         }
@@ -375,16 +380,16 @@ fn structural_issues(
                 out.push((
                     index,
                     IssueSeverity::Warning,
-                    format!(
+                    ui_lang::t(&format!(
                         "第 {ordinal} 条候选 `{candidate}` 与第 {previous} 条重复，以先出现者优先"
-                    ),
+                    )),
                 ));
             }
             if candidate == &entry.replacement {
                 out.push((
                     index,
                     IssueSeverity::Warning,
-                    format!("第 {ordinal} 条左右相同（`{candidate}`），该条无实际效果"),
+                    ui_lang::t(&format!("第 {ordinal} 条左右相同（`{candidate}`），该条无实际效果")),
                 ));
             }
             if rules.use_regex {
@@ -392,7 +397,7 @@ fn structural_issues(
                     out.push((
                         index,
                         IssueSeverity::Error,
-                        format!("第 {ordinal} 条正则无效：{e}"),
+                        ui_lang::t(&format!("第 {ordinal} 条正则无效：{e}")),
                     ));
                 }
             }
@@ -409,7 +414,7 @@ pub fn validate(table: &ReplaceTable) -> ValidationReport {
         issues.push(TableIssue {
             line: 0,
             severity: IssueSeverity::Error,
-            message: "表名不能为空".into(),
+            message: ui_lang::t("表名不能为空"),
         });
     }
     if table
@@ -419,7 +424,7 @@ pub fn validate(table: &ReplaceTable) -> ValidationReport {
         issues.push(TableIssue {
             line: 0,
             severity: IssueSeverity::Error,
-            message: "表名不能包含路径分隔符或文件名保留字符".into(),
+            message: ui_lang::t("表名不能包含路径分隔符或文件名保留字符"),
         });
     }
 
@@ -440,10 +445,10 @@ fn report_from(table: &ReplaceTable, mut issues: Vec<TableIssue>) -> ValidationR
         issues.push(TableIssue {
             line: 0,
             severity: IssueSeverity::Warning,
-            message: format!(
+            message: ui_lang::t(&format!(
                 "表含 {} 条，超过 1 万条（编译为 OpenCC 内联字典时会自动切分）",
                 table.entries.len()
-            ),
+            )),
         });
     }
     let errors = issues
@@ -477,7 +482,7 @@ pub fn parse_table_text(text: &str, name: &str) -> ParsedTable {
         issues.push(TableIssue {
             line: 0,
             severity: IssueSeverity::Error,
-            message: "表名不能为空".into(),
+            message: ui_lang::t("表名不能为空"),
         });
     } else if table
         .name
@@ -486,7 +491,7 @@ pub fn parse_table_text(text: &str, name: &str) -> ParsedTable {
         issues.push(TableIssue {
             line: 0,
             severity: IssueSeverity::Error,
-            message: "表名不能包含路径分隔符或文件名保留字符".into(),
+            message: ui_lang::t("表名不能包含路径分隔符或文件名保留字符"),
         });
     }
     table.meta.entry_count = table.entries.len();

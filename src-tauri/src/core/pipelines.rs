@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
+use super::ui_lang;
+
 // ---------------------------------------------------------------------------
 // 选项类型
 // ---------------------------------------------------------------------------
@@ -590,10 +592,12 @@ pub fn catalog() -> Vec<ToolMeta> {
         inspects_only: bool,
     ) -> ToolMeta {
         ToolMeta {
+            // id 是前端用的稳定标识，**绝不能翻译**（它与快捷键绑定、批处理队列
+            // 里的 step.kind 一一对应）；其余三项是给用户看的，走一遍语言
             id: id.to_owned(),
-            label: label.to_owned(),
-            group: group.to_owned(),
-            hint: hint.to_owned(),
+            label: ui_lang::t(label),
+            group: ui_lang::t(group),
+            hint: ui_lang::t(hint),
             has_options,
             inspects_only,
         }

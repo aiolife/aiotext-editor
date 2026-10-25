@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
+use super::ui_lang;
+
 /// 搜索/替换选项（F-05 §5.3 `RegexOptions` 扩展）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,8 +244,10 @@ pub fn categories() -> Vec<CategoryInfo> {
     ];
     spec.iter()
         .map(|(token, label, sample)| CategoryInfo {
+            // token 是正则写法（要原样插进输入框），sample 是示例字符（用户数据），
+            // 两者都不翻译；只有 label 是给人看的类目说明
             token: (*token).to_owned(),
-            label: (*label).to_owned(),
+            label: ui_lang::t(label),
             sample: (*sample).to_owned(),
         })
         .collect()

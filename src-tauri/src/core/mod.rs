@@ -15,3 +15,4 @@ pub mod replace;
 pub mod session;
 pub mod settings;
 pub mod text_diff;
+pub mod ui_lang;

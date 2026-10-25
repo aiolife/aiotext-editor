@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use rayon::prelude::*;
+
+use super::ui_lang;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
@@ -215,7 +217,7 @@ where
         .iter()
         .filter(|p| !p.exists())
         .map(|p| {
-            let msg = format!("路径不存在：{}", p.display());
+            let msg = ui_lang::t(&format!("路径不存在：{}", p.display()));
             on_progress(BatchFileEvent::Error {
                 index: 0,
                 total: 0,
@@ -358,7 +360,7 @@ fn run_one_file(path: &Path, req: &BatchRequest) -> RunResult {
     if req.backup && !backed_up {
         return Err(BatchRunError {
             phase: BatchPhase::Backup,
-            message: "备份失败：无法创建 .bak 文件".to_string(),
+            message: ui_lang::t("备份失败：无法创建 .bak 文件"),
         });
     }
 

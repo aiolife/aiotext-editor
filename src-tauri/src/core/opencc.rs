@@ -14,6 +14,8 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+
+use super::ui_lang;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, OnceLock};
 
@@ -74,9 +76,11 @@ impl Direction {
         }
     }
 
-    /// UI 显示名
-    pub fn label(&self) -> &'static str {
-        match self {
+    /// UI 显示名（PRD §3.6：按界面语言输出，故不再是 `&'static str`）
+    pub fn label(&self) -> String {
+        // 注意：这些是**转换方向名**，描述的是转换本身而不是当前界面语言，
+        // 所以即使在繁體界面下「简体 → 繁体」也仍然要显示（只是写成繁體字的「簡體 → 繁體」）
+        let text = match self {
             Direction::S2T => "简体 → 繁体（OpenCC 标准）",
             Direction::T2S => "繁体 → 简体（OpenCC 标准）",
             Direction::S2TWP => "简体 → 台湾正体（含台湾惯用词彙）",
@@ -84,7 +88,8 @@ impl Direction {
             Direction::S2HK => "简体 → 香港繁体",
             Direction::HK2S => "香港繁体 → 简体",
             Direction::Custom(_) => "用户自定义转换配置",
-        }
+        };
+        ui_lang::t(text)
     }
 
     /// 同族方向（歧义诊断差分用）：同一转换族的其他标准方向

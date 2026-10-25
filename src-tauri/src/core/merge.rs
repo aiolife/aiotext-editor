@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 
+use super::ui_lang;
+
 /// 拼接策略（F-07 §7.2「合并策略」）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -277,7 +279,8 @@ pub fn plan_merge(items: &[MergeItem], opts: &MergePlanOptions) -> AppResult<Vec
                         .map(|p| p.captures.clone())
                         .unwrap_or_default(),
                 ),
-                _ => "合并结果".to_owned(),
+                // 输出名会显示在合并结果报告里，是界面文案
+                _ => ui_lang::t("合并结果"),
             };
             Ok(vec![MergedOutput {
                 name,

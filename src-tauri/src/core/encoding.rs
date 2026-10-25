@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppResult;
 
+use super::ui_lang;
+
 /// 支持的编码（与 docs/02-functional-spec.md F-02 §2.3 数据契约一致）
 ///
 /// **serde 名必须与 `label()` 一致**（`"utf-8"` / `"utf-16le"` / `"iso-8859-1"` …）：
@@ -156,8 +158,9 @@ impl<'de> Deserialize<'de> for EncodingOrAuto {
         if s == "auto" {
             Ok(EncodingOrAuto::Auto)
         } else {
+            // 这条会在 settings.json 被人手改坏时冒到界面上，属于用户可见文案
             let enc = Encoding::from_label(&s)
-                .ok_or_else(|| Error::custom(format!("未知编码或保留字：{s}")))?;
+                .ok_or_else(|| Error::custom(ui_lang::t(&format!("未知编码或保留字：{s}"))))?;
             Ok(EncodingOrAuto::Fixed(enc))
         }
     }

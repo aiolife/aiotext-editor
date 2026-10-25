@@ -1023,6 +1023,180 @@ try {
 
     check('无页面运行时错误', errors.length === 0, errors.length ? errors.map((e) => e.method).join(',') : 'none');
 
+    // ---------------------------------------------------------------------
+    // 多语言（PRD §3.6）：L-2 界面跟着变、L-3 用户数据不许跟着变
+    //
+    // 放在「关掉所有标签」之前：L-3 要往编辑器和查找框里写简体内容，得有活动标签。
+    // 预期繁體串取自 s2twp 对该词条的实际输出（不是拍脑袋翻译），故这里的字面量
+    // 就是后端真实产出的值。
+    // ---------------------------------------------------------------------
+    {
+      const MENU_SIMPLIFIED = ['文件', '编辑', '简繁', '排版', '视图', '帮助'];
+      const MENU_TRADITIONAL = ['檔案', '編輯', '簡繁', '排版', '檢視', '幫助'];
+
+      // ①切到繁體：视图 → 选项… → 外观 → 多语言
+      const switched = await evaluate(`(async () => {
+        const tick = () => new Promise((r) => setTimeout(r, 150));
+        const trigger = (label) =>
+          [...document.querySelectorAll('header .menubar-trigger')].find((e) => e.textContent.trim() === label);
+
+        const t = trigger('视图');
+        if (!t) return { ok: false, reason: '顶栏没有「视图」' };
+        t.click();
+        await tick();
+        const item = [...document.querySelectorAll('.menu-panel .menu-item')].find((e) =>
+          e.textContent.includes('选项'),
+        );
+        if (!item) return { ok: false, reason: '视图菜单里没有「选项…」' };
+        item.click();
+        await tick();
+
+        // 「多语言」Row：label 在 .settings-row-label 的第一个 span 里
+        const row = [...document.querySelectorAll('.settings-row')].find(
+          (r) => r.querySelector('.settings-row-label span')?.textContent.trim() === '多语言',
+        );
+        const sel = row?.querySelector('.settings-row-control select');
+        if (!sel) return { ok: false, reason: '外观 tab 里没有多语言下拉框' };
+
+        // React 监听的是 onChange，直接赋值 value 它收不到 —— 走原生 setter 再派发事件
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLSelectElement.prototype,
+          'value',
+        ).set;
+        setter.call(sel, 'zh-Hant');
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await tick();
+
+        const closeBtn = [...document.querySelectorAll('.dialog-actions button')].find(
+          (b) => b.textContent.trim() === '关闭',
+        );
+        closeBtn?.click();
+        await tick();
+        return { ok: true };
+      })()`);
+
+      check(
+        '多语言：能切到繁體（设置 → 外观 → 多语言）',
+        switched?.ok === true,
+        switched?.ok ? 'ok' : String(switched?.reason),
+      );
+
+      // ②L-2：菜单栏顶级项变成繁體
+      const tops = await evaluate(`(() =>
+        [...document.querySelectorAll('header .menubar-trigger')].map((e) => e.textContent.trim())
+      )()`);
+      check(
+        'L-2 切繁體后菜单栏顶级项为繁體',
+        JSON.stringify(tops) === JSON.stringify(MENU_TRADITIONAL),
+        JSON.stringify(tops),
+      );
+      check(
+        'L-2 切繁體后界面不再出现对应简体写法',
+        Array.isArray(tops) && !tops.some((x) => MENU_SIMPLIFIED.includes(x)),
+        Array.isArray(tops) ? `命中简体：${tops.filter((x) => MENU_SIMPLIFIED.includes(x))}` : '',
+      );
+
+      // ③L-3：用户数据一律不许被翻译
+      //
+      // ①「文件名保持简体」这条没法在这里验：smoke 不经过原生文件对话框，
+      // 造不出带简体中文名的标签。故这里守住两条同样能卡住误转的硬断言
+      // ——它们走的是同一条「界面文案 vs 用户数据」的分界线。
+      const SAMPLE = '会议记录'; // 繁體下会变成「會議記錄」，区分度足够
+
+      // 文档正文：走 CDP 的真实输入。页面里合成的 execCommand 不进 CodeMirror
+      // （见上方 evaluate 处的说明），那样量到的不是应用真正看到的内容。
+      await evaluate(`(() => {
+        document.querySelector('.cm-content')?.focus();
+        return true;
+      })()`);
+      await cdp.send('Input.insertText', { text: SAMPLE });
+      await sleep(300);
+
+      const findTyped = await evaluate(`(async () => {
+        const tick = () => new Promise((r) => setTimeout(r, 150));
+        const trigger = (label) =>
+          [...document.querySelectorAll('header .menubar-trigger')].find((e) => e.textContent.trim() === label);
+        // 繁體界面下「编辑」已变成「編輯」、「查找」变成「查詢」
+        trigger('編輯')?.click();
+        await tick();
+        const findItem = [...document.querySelectorAll('.menu-panel .menu-item')].find((e) =>
+          e.textContent.includes('查詢'),
+        );
+        findItem?.click();
+        await tick();
+        return !!document.querySelector('#search-find');
+      })()`);
+      if (findTyped) {
+        // 查找框是受控 input，用原生 setter + input 事件让 React 收到
+        await evaluate(`(() => {
+          document.querySelector('#search-find')?.focus();
+          return true;
+        })()`);
+        await cdp.send('Input.insertText', { text: SAMPLE });
+        await sleep(300);
+      }
+
+      const userData = await evaluate(`(() => ({
+        docText: [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join('\\n'),
+        findValue: document.querySelector('#search-find')?.value ?? null,
+      })())()`);
+      userData.docHasSimplified = String(userData.docText).includes(SAMPLE);
+      userData.docHasTraditional = String(userData.docText).includes('會議記錄');
+
+      check(
+        'L-3 繁體模式下文档正文保持简体（不许误转用户数据）',
+        userData?.docHasSimplified === true && userData?.docHasTraditional === false,
+        `简体命中 ${userData?.docHasSimplified} · 繁體污染 ${userData?.docHasTraditional}`,
+      );
+      check(
+        'L-3 繁體模式下查找框输入保持简体',
+        userData?.findValue === '会议记录',
+        String(userData?.findValue),
+      );
+
+      // 切回简体：繁體若进了回归网，默认路径也不能被它带歪
+      await evaluate(`(async () => {
+        const tick = () => new Promise((r) => setTimeout(r, 150));
+        const trigger = (label) =>
+          [...document.querySelectorAll('header .menubar-trigger')].find((e) => e.textContent.trim() === label);
+        trigger('檢視')?.click();
+        await tick();
+        const item = [...document.querySelectorAll('.menu-panel .menu-item')].find((e) =>
+          e.textContent.includes('選項'),
+        );
+        item?.click();
+        await tick();
+        const row = [...document.querySelectorAll('.settings-row')].find(
+          (r) => r.querySelector('.settings-row-label span')?.textContent.trim() === '多語言',
+        );
+        const sel = row?.querySelector('.settings-row-control select');
+        if (sel) {
+          const setter = Object.getOwnPropertyDescriptor(
+            window.HTMLSelectElement.prototype,
+            'value',
+          ).set;
+          setter.call(sel, 'zh');
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          await tick();
+        }
+        const closeBtn = [...document.querySelectorAll('.dialog-actions button')].find(
+          (b) => b.textContent.trim() === '關閉',
+        );
+        closeBtn?.click();
+        await tick();
+        return true;
+      })()`);
+
+      const backTops = await evaluate(`(() =>
+        [...document.querySelectorAll('header .menubar-trigger')].map((e) => e.textContent.trim())
+      )()`);
+      check(
+        '多语言：能切回简体（默认语言不被繁體用例带歪）',
+        JSON.stringify(backTops) === JSON.stringify(MENU_SIMPLIFIED),
+        JSON.stringify(backTops),
+      );
+    }
+
     // v0.9：关掉所有标签之后，编辑区必须是一片空白 —— 不塞欢迎语、不塞功能介绍。
     // 这条断言盯的是「空白页又被塞回东西」这类回退。
     const emptyState = await evaluate(`(async () => {
