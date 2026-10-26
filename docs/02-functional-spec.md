@@ -358,7 +358,10 @@ async fn preview_convert(req: ConvertRequest) -> Result<ConvertPreview, String>;
 
 ### 3.9 单测覆盖
 
-- OpenCC 17 种转换各跑 10k 字样本，对比 v1.4.2 reference output。
+- OpenCC **6 种**转换（s2t / t2s / s2twp / tw2sp / s2hk / hk2s）各跑 10k 字样本，
+  对比 v1.4.2 reference output。
+  > **2026-10-26 更正**：此处原写「17 种」，与 v0.5 的方向收敛（见 F-03 §实现注记）
+   > 矛盾——引擎侧只有 6 种，另 8 种已删除、`t2seal` 等三个历来不支持。按事实改为 6 种。
 - 不转换括号对：含 `[]` 的样例文本。
 - 歧义片段诊断：含"文/丑/瞭/干"等多义字的样本。
 - 用户自定义表叠加：F-04 的内联字典进入转换链后的组合回归。
