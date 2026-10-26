@@ -9,6 +9,7 @@
 //! 本文件只验证**跨语言契约**。
 
 use aiotext_editor_lib::core::pipelines::{self, PipelineStep, StepOutcome, ToolMeta};
+use aiotext_editor_lib::core::ui_lang;
 use serde_json::{json, Value};
 
 /// 取 JSON 对象的键集合（排序后便于比较）
@@ -39,9 +40,13 @@ fn catalog_matches_frontend_tool_meta_shape() {
     );
 
     // 分组必须真实存在，前端据此渲染分隔标题
+    //
+    // 期望值要过一遍 `ui_lang::t`：`catalog()` 会按当前界面语言输出分组名（PRD
+    // L-5），而集成测试用的是 lib 的非 test 编译，读得到开发者机器上真实的
+    // settings.json。硬编码简体会让这组断言在繁體配置的机器上失败。
     let groups: Vec<&str> = metas.iter().map(|m| m.group.as_str()).collect();
-    for expected in ["排版规范", "常用"] {
-        assert!(groups.contains(&expected), "缺少分组：{expected}");
+    for expected in [ui_lang::t("排版规范"), ui_lang::t("常用")] {
+        assert!(groups.contains(&expected.as_str()), "缺少分组：{expected}");
     }
     // 五个排版类工具都要在目录里，且都可带选项
     for id in [

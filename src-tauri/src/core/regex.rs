@@ -30,6 +30,10 @@ use super::ui_lang;
 /// 搜索/替换选项（F-05 §5.3 `RegexOptions` 扩展）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct RegexOptions {
     /// 正则模式（false = 字面查找，仍受 `use_escape` 影响）
     #[serde(default = "default_true")]
@@ -323,8 +327,15 @@ pub fn extend(pattern: &str) -> AppResult<String> {
                 char::from_u32(code)
                     .ok_or_else(|| AppError::Regex(format!("无效码位：U+{code:X}")))?;
                 // ASCII 字母数字可直接写；其余（含标点、需转义的字符）统一用 \x{...}
-                if code < 0x80 && (code as u8 as char).is_ascii_alphanumeric() {
-                    out.push(code as u8 as char);
+                //
+                // `code < 0x80` 已在 `&&` 左侧确认，故下面的 `as u8` 不会截断。
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "短路左侧已确认 code < 0x80"
+                )]
+                let ascii = code as u8;
+                if code < 0x80 && (ascii as char).is_ascii_alphanumeric() {
+                    out.push(ascii as char);
                 } else {
                     out.push_str(&format!("\\x{{{code:X}}}"));
                 }

@@ -133,6 +133,17 @@ pub struct BatchSummary {
 
 /// `*.bak` 是批处理自己产出的备份，**不得作为输入再处理**
 /// （否则第二次运行会产出 `x.txt.bak.bak`，且「备份」语义被破坏）
+/// 耗时的毫秒数（`u128` → `u64`）。
+///
+/// `Duration::as_millis()` 返回 `u128`，而 `elapsed_ms` 字段与进度快照里都是
+/// `u64`。直接 `as u64` 在越界时会**静默截成另一个看起来完全正常的数**——虽然
+/// 一次批处理不可能跑满 `u64::MAX` 毫秒（约 58 亿年），但把「不可能」变成
+/// 「显式饱和」的代价只是几行，还省得每个调用点都要读者自己推一遍边界
+/// （PRD §3.7 R-1：不留静默丢信息的转换）。
+pub(crate) fn elapsed_ms(elapsed: std::time::Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+}
+
 fn is_backup_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -206,7 +217,7 @@ where
                 phase: BatchPhase::Enumerate,
                 message: e.to_string(),
             });
-            summary.elapsed_ms = started.elapsed().as_millis() as u64;
+            summary.elapsed_ms = elapsed_ms(started.elapsed());
             return summary;
         }
     };
@@ -238,7 +249,7 @@ where
 
     // 让 Channel 先发一次「Started」再让 UI 拿到总数
     if total == 0 {
-        summary.elapsed_ms = started.elapsed().as_millis() as u64;
+        summary.elapsed_ms = elapsed_ms(started.elapsed());
         return summary;
     }
 
@@ -295,7 +306,7 @@ where
 
     let mut final_summary = summary_lock.into_inner().expect("batch summary mutex");
     final_summary.cancelled = cancel.load(Ordering::Relaxed);
-    final_summary.elapsed_ms = started.elapsed().as_millis() as u64;
+    final_summary.elapsed_ms = elapsed_ms(started.elapsed());
     final_summary.scanned = total;
     final_summary.errors.extend(invalid_inputs);
     summary = final_summary;
@@ -481,7 +492,10 @@ mod tests {
     }
 
     fn touch_mtime(p: &Path, secs_ago: i64) {
-        let target = std::time::SystemTime::now() - Duration::from_secs(secs_ago as u64);
+        // 测试辅助：secs_ago 是写死的「N 秒之前」，非负
+        #[expect(clippy::cast_sign_loss, reason = "测试里传入的 secs_ago 恒为非负")]
+        let secs = secs_ago as u64;
+        let target = std::time::SystemTime::now() - Duration::from_secs(secs);
         let ft = filetime::FileTime::from_system_time(target);
         // 直接调内部接口
         let _ = set_file_mtime_for_test(p, ft);

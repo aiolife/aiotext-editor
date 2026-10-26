@@ -523,6 +523,16 @@ export default function App() {
   const [traditionalMap, setTraditionalMap] = useState<TraditionalMap | null>(null);
 
   useEffect(() => {
+    // 只有繁體界面才需要这张表。
+    //
+    // 这里曾经是无条件加载——那是 v0.13 引入的**启动回退**：后端首次调 OpenCC
+    // 要把内嵌的 28 个文件（6 个配置 JSON + 22 个 .ocd2 词典）展开到 %TEMP% 并
+    // 加载词典，几十毫秒。而简体是默认语言，绝大多数用户根本用不到繁體，却每次
+    // 启动都付这笔钱。故改成按需：切到繁體时才取，切回简体就丢掉。
+    if (language !== 'zh-Hant') {
+      setTraditionalMap(null);
+      return;
+    }
     let cancelled = false;
     const texts = allSimplifiedTexts();
     uiTextsToTraditional(texts)
@@ -540,7 +550,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [language]);
 
   // App 自己提供 Provider，拿不到 Context；这里先把模块级 `t` 与当前语言对齐，
   // 本文件下面的文案才能跟着切（详见 configureI18n 的注释）

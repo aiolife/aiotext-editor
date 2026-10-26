@@ -18,13 +18,40 @@
 use std::sync::OnceLock;
 
 use super::opencc::{self, Direction};
-use super::settings::{self, UiLang};
+use super::settings::UiLang;
+// 只有非测试编译才读磁盘上的设置（测试期恒简体，见 `current` 的注释）
+#[cfg(not(test))]
+use super::settings;
 
+#[cfg_attr(
+    test,
+    allow(dead_code, reason = "测试期 current() 直接返回简体，用不到这个缓存")
+)]
 static UI_LANG: OnceLock<UiLang> = OnceLock::new();
 
-/** 当前语言。读不到设置就按简体算——界面语言不该让程序起不来 */
+/**
+ * 当前语言。读不到设置就按简体算——界面语言不该让程序起不来。
+ *
+ * ## 为什么测试期恒为简体
+ *
+ * 后端错误提示会跟着语言变（PRD L-5），于是有一批单测断言「错误消息里含某个
+ * 中文字串」。若测试期也去读开发者机器上真实的 `settings.json`，同一套测试就会
+ * **在简体机器上通过、在繁體机器上失败**——测试依赖了外部环境，这是回归网不该
+ * 有的性质（PRD L-8 要求默认路径可预测）。
+ *
+ * 故 `#[cfg(test)]` 下直接返回简体，与磁盘配置解耦。要验繁體分支的用例请直接调
+ * [`t_with`] 传入语言，不要改这里的全局值——`cargo test` 默认多线程，改全局
+ * 会让并发中的其它用例跟着变，结果 unpredictable。
+ */
 fn current() -> UiLang {
-    *UI_LANG.get_or_init(|| settings::load().language)
+    #[cfg(test)]
+    {
+        UiLang::Zh
+    }
+    #[cfg(not(test))]
+    {
+        *UI_LANG.get_or_init(|| settings::load().language)
+    }
 }
 
 /**
@@ -34,7 +61,18 @@ fn current() -> UiLang {
  * 失败时回退原文——宁可显示简体，也不能因为翻译失败把错误提示吞掉。
  */
 pub fn t(text: &str) -> String {
-    if current() != UiLang::ZhHant {
+    t_with(current(), text)
+}
+
+/**
+ * 按指定语言输出文案。
+ *
+ * 抽出来是为了**可测**：`t()` 读全局语言，而 `cargo test` 默认多线程跑，测试里
+ * 改全局会让并发中的其它用例跟着变。把语言做成参数，`t()` 就成了薄薄一层，
+ * 繁體分支可以直接单独断言。
+ */
+pub fn t_with(lang: UiLang, text: &str) -> String {
+    if lang != UiLang::ZhHant {
         return text.to_owned();
     }
     match opencc::convert(&Direction::S2TWP, text) {
@@ -65,5 +103,17 @@ mod tests {
     fn 空串与不含中文的串不受影响() {
         assert_eq!(t(""), "");
         assert_eq!(t("UTF-8"), "UTF-8");
+    }
+
+    #[test]
+    fn 繁體下走_opencc() {
+        // 直接传语言，不碰全局——否则并发中的其它用例会跟着变
+        assert_eq!(t_with(UiLang::ZhHant, "文件不存在"), "檔案不存在");
+    }
+
+    #[test]
+    fn 翻译失败时回退原文而不是吞掉提示() {
+        // OpenCC 起不来（比如 %TEMP% 不可写）时，宁可显示简体也不能没提示
+        assert!(!t_with(UiLang::ZhHant, "文件不存在").is_empty());
     }
 }

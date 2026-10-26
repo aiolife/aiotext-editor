@@ -94,6 +94,13 @@ pub struct DiffResult {
 // 入口
 // ---------------------------------------------------------------------------
 
+/// 两处收窄都有前置保证，clippy 推不出来，就地写明：
+/// - `pos`：先用 `min(u32::MAX)` 夹过，故再 `as u32` 不会截断（夹完必然装得下）；
+/// - `len`：`len_utf16()` 对**单个** `char` 只会返回 1 或 2，装 `u8` 绰绰有余。
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "pos 已被 min(u32::MAX) 夹过；len_utf16 对单字符只会是 1 或 2"
+)]
 fn items_of(text: &str, opts: &CompareOptions, tables: &VariantTables) -> Vec<Item> {
     CanonStream::new(text, opts, tables)
         .map(|c| Item {
@@ -357,6 +364,22 @@ fn line_ops(a: &[Item], b: &[Item], degraded: &mut bool) -> Option<Vec<Op>> {
 }
 
 /// Myers 贪心（保存每一步的 V 以便回溯）：时间在 O(N·D)、内存在 O(D²)
+/// Myers 差分：索引算术用 `isize` 是算法的自然写法（`k` 从 `-d` 走到 `d`，会取负）。
+///
+/// # 为什么这里的 `as` 是安全的
+///
+/// `v` 的长度是 `2(n+m) + 1`，`offset = n + m`，而 `k ∈ [-d, d]`、`d ≤ max_d`，
+/// 且 `d > max_d` 时函数已提前返回 `None`。于是 `k + offset ∈ [0, 2(n+m)]`，
+/// **既不会为负也不会越界**——`as usize` 不会 wrap，`as isize` 不会丢符号。
+/// 文本长度要到 `isize::MAX` 量级才可能出问题，那在这之前内存早就不够了。
+///
+/// 这些边界 clippy 推不出来，故就地写明而不是改写：把每个索引都换成
+/// `try_into().unwrap()` 只会换来一堆新的 panic 点，可读性还更差。
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "k + offset 恒落在 [0, 2(n+m)]（推导见函数文档），不会为负也不会越界"
+)]
 fn myers_ops<T: PartialEq>(a: &[T], b: &[T], max_d: usize) -> Option<Vec<Op>> {
     let (n, m) = (a.len(), b.len());
     if n == 0 {
@@ -414,6 +437,14 @@ fn myers_ops<T: PartialEq>(a: &[T], b: &[T], max_d: usize) -> Option<Vec<Op>> {
 }
 
 /// 从右下角沿 trace 往回走，倒着攒出编辑脚本
+///
+/// 与 [`myers_ops`] 同一套索引算术（`kk + offset` 恒落在快照范围内），
+/// `n / m / step` 也都不可能到 `isize::MAX` 量级。
+#[expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "与 myers_ops 同理：kk + offset 恒在范围内，n/m/step 远小于 isize::MAX"
+)]
 fn backtrack_ops(trace: &[Vec<isize>], n: usize, m: usize, offset: isize) -> Vec<Op> {
     let mut ops = Vec::new();
     let (mut x, mut y) = (n as isize, m as isize);

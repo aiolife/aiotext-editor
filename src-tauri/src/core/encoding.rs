@@ -421,10 +421,20 @@ mod cp437 {
 
     /// 字符 → 字节（懒构建，避免每字符线性扫表）
     fn reverse() -> &'static HashMap<char, u8> {
+        // 字节值 = 0x80 + 下标，`HIGH` 定长 128，故最大 0x80 + 127 = 255 = u8::MAX，
+        // 正好卡满不溢出。这个平衡**靠表长维持**，谁往 HIGH 里加第 129 个字符，
+        // 这里就会静默 wrap（release）或直接 panic（debug）——所以宁可显式失败：
+        // 用 `try_from` 而不是 `as`，越界立刻炸在启动构建这张表时，而不是变成
+        // 某个字符编码成错误字节、等到用户发现文档里有个怪字才暴露。
+        const _: () = assert!(HIGH.len() <= 0x80);
         static MAP: LazyLock<HashMap<char, u8>> = LazyLock::new(|| {
             HIGH.iter()
                 .enumerate()
-                .map(|(index, &ch)| (ch, index as u8 + 0x80))
+                .map(|(index, &ch)| {
+                    let byte = u8::try_from(index + 0x80)
+                        .expect("HIGH 最多 128 项，0x80 + 127 不会越过 u8::MAX");
+                    (ch, byte)
+                })
                 .collect()
         });
         &MAP
@@ -449,7 +459,10 @@ mod cp437 {
         for ch in text.chars() {
             let code = ch as u32;
             if code < 0x80 {
-                out.push(code as u8);
+                // 上一行已经确认 < 0x80，装 u8 不会截断；clippy 推不出这个短路
+                #[expect(clippy::cast_possible_truncation, reason = "已确认 code < 0x80")]
+                let byte = code as u8;
+                out.push(byte);
                 continue;
             }
             match reverse().get(&ch) {

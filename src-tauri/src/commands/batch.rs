@@ -23,7 +23,9 @@ use std::time::Instant;
 
 use serde::Serialize;
 
-use crate::core::batch::{self, BatchFileEvent, BatchPhase, BatchRequest, BatchSummary};
+use crate::core::batch::{
+    self, elapsed_ms, BatchFileEvent, BatchPhase, BatchRequest, BatchSummary,
+};
 use crate::error::AppError;
 
 /// 首次进度快照的延迟（毫秒）。
@@ -192,7 +194,7 @@ impl ProgressThrottle {
 
     /// 到达间隔则发一条快照；用 CAS 抢占，保证并发调用下至多一条
     fn maybe_flush(&self) {
-        let now = self.started_at.elapsed().as_millis() as u64;
+        let now = elapsed_ms(self.started_at.elapsed());
         let last = self.last_flush_ms.load(Ordering::Relaxed);
         let due = if last == 0 {
             // 还没发过：短任务直接不发中间进度（收尾的 flush_now 会补上）
@@ -215,10 +217,8 @@ impl ProgressThrottle {
 
     /// 强制发一条快照（收尾用）
     fn flush_now(&self) {
-        self.last_flush_ms.store(
-            self.started_at.elapsed().as_millis() as u64,
-            Ordering::Relaxed,
-        );
+        self.last_flush_ms
+            .store(elapsed_ms(self.started_at.elapsed()), Ordering::Relaxed);
         self.send_snapshot();
     }
 

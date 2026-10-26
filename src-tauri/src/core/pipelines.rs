@@ -274,6 +274,10 @@ pub enum QuoteStyle {
 /// 规范标点（GB/T 15834-2011）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct PunctOptions {
     pub quote_style: QuoteStyle,
     /// 省略号统一为「……」（六点，占两格）
@@ -310,6 +314,10 @@ impl Default for PunctOptions {
 /// 反向（去掉全角标点两侧多余空格）也在里面——网文稿件里这两种脏数据都常见。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct SpacingOptions {
     /// 中文与拉丁字母之间补空格
     pub cjk_latin: bool,
@@ -344,6 +352,10 @@ impl Default for SpacingOptions {
 /// 中文文案（chinese-copywriting-guidelines 的常用子集）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct CopywritingOptions {
     /// 中文与拉丁字母之间补空格
     pub space_cjk_latin: bool,
@@ -390,6 +402,10 @@ impl Default for CopywritingOptions {
 /// 列表符号统一、代码围栏前后留空行、行尾不留空格、代码内部一律不动。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct TechDocOptions {
     /// `#标题` → `# 标题`
     pub heading_space: bool,
@@ -421,6 +437,10 @@ impl Default for TechDocOptions {
 /// 片段处理（行级批处理，把原来散在菜单里的细项收进来）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct SnippetOptions {
     pub trim_head: bool,
     pub trim_end: bool,
@@ -1035,6 +1055,12 @@ fn insert_blank_between(text: &str) -> StepOutcome {
         .filter(|(content, _)| is_blank(content))
         .count();
     let blank_after = body.len() - 1;
+    // 行数是 `usize`，但文档行数不可能到 isize::MAX 量级（那之前内存早不够了），
+    // 故这里转 isize 做差不会 wrap。
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "文档行数远小于 isize::MAX，转 isize 做差安全"
+    )]
     let delta = blank_after as isize - blank_before as isize;
     let note = if delta >= 0 {
         format!("{} 段，插入 {} 个空行", body.len(), delta)

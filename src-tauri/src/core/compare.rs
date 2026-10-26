@@ -36,6 +36,10 @@ pub enum VariantStrictness {
 /// 比较选项（F-06 §6.3 `CompareOptions`）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct CompareOptions {
     /// 忽略回车（CR / LF）
     pub ignore_newlines: bool,

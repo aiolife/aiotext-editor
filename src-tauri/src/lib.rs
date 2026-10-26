@@ -67,8 +67,16 @@ pub fn run() {
             // 白写一遍磁盘；便携版尤其明显，还要从二进制展开 131 KB 到临时目录。
             // 现已改为**按需**：由命令层 `list_replace_tables` / `load_replace_table`
             // 在真正要用到时兜一次（幂等），启动路径上彻底没有这笔开销。
+            // `as_millis()` 是 u128，`setup_ms` 是 u64。启动耗时不可能跑到
+            // u64::MAX 毫秒（约 58 亿年），故这里的截断不会发生；写成 `try_from`
+            // 反而要在启动路径上多处理一个不可能失败的分支。
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "启动耗时不会超过 u64::MAX 毫秒"
+            )]
+            let setup_ms = started.elapsed().as_millis() as u64;
             let metrics = StartupMetrics {
-                setup_ms: started.elapsed().as_millis() as u64,
+                setup_ms,
                 debug_build: cfg!(debug_assertions),
             };
             // 托盘建好即隐藏；只有开启「关闭时隐藏」且窗口真的被藏起来时才显示

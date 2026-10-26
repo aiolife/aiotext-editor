@@ -57,6 +57,10 @@ pub struct ReplaceEntry {
 /// 表级行为开关（F-04 §4.5；OpenCC 内联模式下部分项不生效）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct ReplaceRules {
     /// 仅整词匹配（独立替换模式；OpenCC 内联模式不生效）
     pub whole_word: bool,
@@ -360,7 +364,9 @@ fn structural_issues(
             // 但 `{candidate}` 是用户写的词条（PRD §3.6 L-3：不得翻译），故整条一起
             // 转——OpenCC 对 ASCII、以及本就是繁體的内容都是幂等的，不会误伤。
             let message = if entry.pattern.is_empty() && !entry.replacement.trim().is_empty() {
-                ui_lang::t(&format!("第 {ordinal} 条缺少 `=`（裸文本无法作为替换规则）"))
+                ui_lang::t(&format!(
+                    "第 {ordinal} 条缺少 `=`（裸文本无法作为替换规则）"
+                ))
             } else {
                 ui_lang::t(&format!("第 {ordinal} 条 `=` 左侧为空"))
             };
@@ -389,7 +395,9 @@ fn structural_issues(
                 out.push((
                     index,
                     IssueSeverity::Warning,
-                    ui_lang::t(&format!("第 {ordinal} 条左右相同（`{candidate}`），该条无实际效果")),
+                    ui_lang::t(&format!(
+                        "第 {ordinal} 条左右相同（`{candidate}`），该条无实际效果"
+                    )),
                 ));
             }
             if rules.use_regex {

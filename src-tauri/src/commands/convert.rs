@@ -61,7 +61,9 @@ pub async fn ui_texts_to_traditional(texts: Vec<String>) -> Result<Vec<String>, 
     tauri::async_runtime::spawn_blocking(move || {
         texts
             .iter()
-            .map(|text| crate::core::opencc::convert(&Direction::S2TWP, text).map_err(|e| e.to_string()))
+            .map(|text| {
+                crate::core::opencc::convert(&Direction::S2TWP, text).map_err(|e| e.to_string())
+            })
             .collect::<Result<Vec<_>, _>>()
     })
     .await

@@ -32,6 +32,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -105,6 +106,10 @@ impl Theme {
 /// 外观
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "这些字段是彼此正交的独立开关（不是互斥的模式选择），且经 serde 具名序列化给前端，不存在位置难辨的问题"
+)]
 pub struct Appearance {
     /// 正文字体族（CSS `font-family` 值）
     pub font_family: String,
@@ -296,14 +301,45 @@ pub fn settings_path() -> AppResult<PathBuf> {
     Ok(base.join(SETTINGS_FILE))
 }
 
+/// 进程内缓存（PRD §3.7 P-2）
+///
+/// 启动路径上 `settings.json` 会被读好几次——托盘建菜单时取语言、后端文案取语言、
+/// `settings_get` 给前端、关闭窗口时再读一次——内容完全一样，却每次都走一遍磁盘。
+/// 缓存起来让启动只读一次。
+///
+/// 之所以用 `Mutex<Option<..>>` 而不是 `OnceLock<Settings>`：`save` 之后缓存必须能
+/// 更新，而 `OnceLock` 只能写一次。
+static CACHE: OnceLock<Mutex<Option<Settings>>> = OnceLock::new();
+
+fn cache_slot() -> &'static Mutex<Option<Settings>> {
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn lock_cache() -> MutexGuard<'static, Option<Settings>> {
+    cache_slot()
+        .lock()
+        .expect("缓存只在 clone / 赋值的瞬间持锁，中间不会 panic")
+}
+
 /// 读取设置（**永不失败**）：见模块头注释的「三条设计原则」第 1 条
+///
+/// 结果在进程内缓存，故磁盘只读一次（PRD §3.7 P-2）。要强制读盘请用 [`load_from`]。
 pub fn load() -> Settings {
-    settings_path().map(|p| load_from(&p)).unwrap_or_default()
+    let mut guard = lock_cache();
+    if let Some(cached) = guard.as_ref() {
+        return cached.clone();
+    }
+    let fresh = settings_path().map(|p| load_from(&p)).unwrap_or_default();
+    *guard = Some(fresh.clone());
+    fresh
 }
 
 /// 写入设置；返回**实际落盘**的值（已钳制 / 清洗）
 pub fn save(settings: &Settings) -> AppResult<Settings> {
-    save_to(&settings_path()?, settings)
+    let written = save_to(&settings_path()?, settings)?;
+    // 缓存跟着更新，否则「改完设置立刻读」会拿到旧值
+    *lock_cache() = Some(written.clone());
+    Ok(written)
 }
 
 /// 恢复默认：删掉设置文件，返回默认值
@@ -311,7 +347,9 @@ pub fn save(settings: &Settings) -> AppResult<Settings> {
 /// 顺带清掉可能残留的 `.bad`（坏文件备份）与 `.tmp`（原子写的中间文件），
 /// 否则「恢复默认」之后旧备份还躺在用户目录里，容易被误当成有效配置。
 pub fn reset() -> AppResult<Settings> {
-    reset_at(&settings_path()?)
+    let defaulted = reset_at(&settings_path()?);
+    *lock_cache() = None;
+    defaulted
 }
 
 /// 从指定路径恢复默认（测试入口）
@@ -331,6 +369,9 @@ pub fn reset_at(path: &Path) -> AppResult<Settings> {
 }
 
 /// 从指定文件读取（测试入口）
+///
+/// **不走缓存**——测试要的就是「真的从这块磁盘内容解析出什么」；若走缓存，
+/// 前一个用例写的值会串到后一个用例里。生产路径请用 [`load`]。
 pub fn load_from(path: &Path) -> Settings {
     let Ok(raw) = fs::read_to_string(path) else {
         // 文件不存在 / 不可读 → 默认值（首次启动的正常路径，不打日志）
