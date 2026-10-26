@@ -2230,9 +2230,7 @@ fn space_digit_unit(line: &str) -> (String, usize) {
         "kg", "cm", "mm", "km", "px", "ms", "gb", "mb", "kb", "tb", "hz", "ghz", "mbps", "kbps",
         "khz", "mhz", "db", "dpi", "fps", "rpm", "nm", "lux", "kwh",
     ];
-    let lower = line.to_lowercase();
     let chars: Vec<char> = line.chars().collect();
-    let lower_chars: Vec<char> = lower.chars().collect();
     let mut out = String::with_capacity(line.len());
     let mut changed = 0usize;
     let mut index = 0usize;
@@ -2253,7 +2251,17 @@ fn space_digit_unit(line: &str) -> (String, usize) {
                 continue;
             }
             // 数字后紧跟单位？（取最长匹配，见函数注释）
-            let rest: String = lower_chars[index..].iter().take(4).collect();
+            //
+            // 只对这 4 个字符逐个转 ASCII 小写，**不对整行 `to_lowercase()`**：
+            // 全角转小写会改变码点数（"İ" → "i" + U+0307、"ﬁ" → "fi"），小写后的
+            // 字符数就不等于 `chars` 了，而下面全用 `chars` 的下标推进——两者一旦
+            // 错位，这类字符之后的所有单位都再也认不出来（PRD §3.9 Q-1）。
+            // 单位表里全是 ASCII，逐个 `to_ascii_lowercase` 已经足够。
+            let rest: String = chars[index..]
+                .iter()
+                .take(4)
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
             if let Some(unit) = UNITS
                 .iter()
                 .filter(|u| rest.starts_with(*u))
@@ -2830,6 +2838,22 @@ mod tests {
             ),
             "10 mbps"
         );
+    }
+
+    #[test]
+    fn digit_unit_stays_aligned_when_lowercasing_changes_char_count() {
+        // 「小写会改变码点数」的字符会让整套下标错位：
+        //   `İ` U+0130 → "i" + U+0307（1 个变 2 个）
+        //   `ﬁ` U+FB01 → "fi"（同样是 1 个变 2 个）
+        // 原先逐个指出的是 `line.to_lowercase()` 的字符数组，却拿原文的下标去切它，
+        // 于是这类字符之后所有位置都偏了，紧跟其后的「数字+单位」便不再被识别。
+        let (fixed, changed) = space_digit_unit("İ5kg");
+        assert_eq!(fixed, "İ5 kg", "İ 之后的下标不该错位");
+        assert_eq!(changed, 1);
+
+        let (fixed, changed) = space_digit_unit("ﬁ10px");
+        assert_eq!(fixed, "ﬁ10 px", "ﬁ 之后的下标不该错位");
+        assert_eq!(changed, 1);
     }
 
     #[test]

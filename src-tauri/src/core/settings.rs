@@ -325,13 +325,32 @@ fn lock_cache() -> MutexGuard<'static, Option<Settings>> {
 ///
 /// 结果在进程内缓存，故磁盘只读一次（PRD §3.7 P-2）。要强制读盘请用 [`load_from`]。
 pub fn load() -> Settings {
-    let mut guard = lock_cache();
-    if let Some(cached) = guard.as_ref() {
-        return cached.clone();
+    // 快路径：命中缓存就是一次 clone，锁随作用域结束立刻释放。
+    {
+        let guard = lock_cache();
+        if let Some(cached) = guard.as_ref() {
+            return cached.clone();
+        }
     }
-    let fresh = settings_path().map(|p| load_from(&p)).unwrap_or_default();
-    *guard = Some(fresh.clone());
-    fresh
+
+    // 慢路径：磁盘 IO **特意放在锁外**。这趟读可能要十几毫秒（网络盘、首次冷读），
+    // 持锁去做的话期间所有并发 `load()` 都得干等着——而它们真正要做的只是克隆一个
+    // 值。锁的临界区应当只覆盖「存取缓存」这件事本身（PRD §3.9 Q-3）。
+    //
+    // 代价：并发 miss 时可能有两个线程各自读一次盘。读是幂等的，多一遍无副作用。
+    let fresh = match settings_path() {
+        Ok(path) => load_from(&path),
+        Err(e) => {
+            // 定位不到用户数据目录是稀罕却要紧的事：不留下痕迹的话，用户会以为
+            // 设置一直存着，实际每次都在按默认值跑（PRD §3.9 Q-7）。
+            tracing::warn!(error = %e, "无法定位设置文件，本次按默认设置启动");
+            Settings::default()
+        }
+    };
+
+    // 拿锁后再看一眼：期间别的线程可能已经填好，`get_or_insert` 不会覆盖它
+    let mut guard = lock_cache();
+    guard.get_or_insert(fresh).clone()
 }
 
 /// 写入设置；返回**实际落盘**的值（已钳制 / 清洗）
@@ -373,9 +392,21 @@ pub fn reset_at(path: &Path) -> AppResult<Settings> {
 /// **不走缓存**——测试要的就是「真的从这块磁盘内容解析出什么」；若走缓存，
 /// 前一个用例写的值会串到后一个用例里。生产路径请用 [`load`]。
 pub fn load_from(path: &Path) -> Settings {
-    let Ok(raw) = fs::read_to_string(path) else {
-        // 文件不存在 / 不可读 → 默认值（首次启动的正常路径，不打日志）
-        return Settings::default();
+    let raw = match fs::read_to_string(path) {
+        Ok(s) => s,
+        // 文件不存在是**首次启动的正常路径**，不打日志
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Settings::default(),
+        Err(e) => {
+            // 存在却读不出来（权限不足 / 磁盘故障 / 被别的进程占着）：必须留下
+            // 痕迹。否则用户改的是默认值、存的也是默认值，还以为一直好好的，
+            // 这条线索一丢就很难回溯（PRD §3.9 Q-7）。
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "设置文件存在但读不出来，本次按默认设置启动"
+            );
+            return Settings::default();
+        }
     };
 
     // 快路径：严格解析

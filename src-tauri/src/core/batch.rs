@@ -304,7 +304,17 @@ where
         }
     });
 
-    let mut final_summary = summary_lock.into_inner().expect("batch summary mutex");
+    // 中毒说明某个工作线程 panic 过。这里刻意**取回**已统计的部分，不跟着 panic：
+    // `into_inner()` 是把数据取出来、锁随即销毁，不存在「带病继续用锁」的问题；
+    // 而批处理的价值恰恰在于「哪怕出了岔子，已完成的上千个成果也要交给用户」。
+    //
+    // 这与 BeautifulRust §5「Lock poisoning is fatal」并不冲突——那条针对的是继续
+    // 用这把锁。上面两处 `lock().expect(..)` 仍保持「中毒即 panic」的语义不变。
+    // 原先这里写成 `into_inner().expect(..)`：用了恢复机制却又 panic，是把两种
+    // 处理方式混在一起的自相矛盾写法（PRD §3.9 Q-2）。
+    let mut final_summary = summary_lock
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     final_summary.cancelled = cancel.load(Ordering::Relaxed);
     final_summary.elapsed_ms = elapsed_ms(started.elapsed());
     final_summary.scanned = total;
@@ -466,6 +476,31 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
     use std::time::Duration;
+
+    #[test]
+    fn final_summary_is_recovered_from_a_poisoned_mutex() {
+        // 复刻 `summary_lock.into_inner()` 那条路径：中毒也必须能把已统计的
+        // 部分取回来，而不是跟着 panic 让整批进度白丢（PRD §3.9 Q-2）。
+        let lock = std::sync::Mutex::new(BatchSummary {
+            scanned: 200,
+            written: 7,
+            ..BatchSummary::default()
+        });
+
+        // Rust 只能靠一次真正的 panic 来毒化锁；用 catch_unwind 把它关在测试里
+        let panicked = std::panic::catch_unwind(|| {
+            let _guard = lock.lock().unwrap();
+            panic!("故意毒化这把锁");
+        });
+        assert!(panicked.is_err(), "这一步本就该 panic");
+        assert!(lock.is_poisoned(), "锁应当处于中毒状态");
+
+        let got = lock
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(got.scanned, 200);
+        assert_eq!(got.written, 7, "中毒也该把已统计的成果取回来");
+    }
 
     fn tmp_dir(label: &str) -> PathBuf {
         let mut p = std::env::temp_dir();

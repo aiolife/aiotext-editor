@@ -19,7 +19,8 @@
 //! 已知限制：`regex` crate 不支持反向引用（`\1` 在**模式**中无效）；
 //! 捕获组引用仅在**替换串**中支持（`\1` 与 `$1` 均可）。
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +29,10 @@ use crate::error::{AppError, AppResult};
 use super::ui_lang;
 
 /// 搜索/替换选项（F-05 §5.3 `RegexOptions` 扩展）
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// 多了个 `Hash`：为的是直接拿它当编译结果缓存的键（PRD §3.9 Q-5）——实时查找
+/// 时同一「pattern + 这组开关」会反复进来，用一个元组做键最省事。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[expect(
     clippy::struct_excessive_bools,
@@ -426,8 +430,49 @@ fn unescape_literal(pattern: &str) -> AppResult<String> {
     Ok(out)
 }
 
+/// 编译结果缓存：`(pattern, opts)` → 编译好的正则
+///
+/// 用户在查找框里逐键输入时会连发 IPC，同一个 pattern 配同一组开关反复编译。
+/// 看着不起眼，但编译一次要跑 `extend`（中文字符类预转换）并构造 DFA，
+/// 是这一屏里最容易重复花的功夫（PRD §3.9 Q-5）。
+static COMPILE_CACHE: LazyLock<Mutex<HashMap<(String, RegexOptions), ::regex::Regex>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// 缓存上限。
+///
+/// 逐键输入会让 key 一路增长（`a`、`ab`、`abc`… 各不相同），不做限制就是无界增长。
+/// 超了就整体清空：查找场景的活动本来集中在最近这几个 pattern，清掉代价很小，
+/// 但写起来远比维护一个 LRU 简单。
+const COMPILE_CACHE_MAX: usize = 64;
+
 /// 编译为正则（含类目预转换与字面模式）
+///
+/// 同参输入走缓存，**失败不缓存**——「这个正则不合法」通常正在被用户修改，
+//  缓存一个失败反而让改好了也拿不到新结果。
 pub fn compile(pattern: &str, opts: &RegexOptions) -> AppResult<::regex::Regex> {
+    let key = (pattern.to_owned(), opts.clone());
+    if let Some(hit) = COMPILE_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+    {
+        return Ok(hit.clone());
+    }
+
+    let built = build_regex(pattern, opts)?;
+
+    let mut cache = COMPILE_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cache.len() >= COMPILE_CACHE_MAX {
+        cache.clear();
+    }
+    cache.insert(key, built.clone());
+    Ok(built)
+}
+
+/// 真正编译一次（不查缓存）
+fn build_regex(pattern: &str, opts: &RegexOptions) -> AppResult<::regex::Regex> {
     let source = if opts.regex {
         extend(pattern)?
     } else {
@@ -728,6 +773,34 @@ mod tests {
 
     fn opts() -> RegexOptions {
         RegexOptions::default()
+    }
+
+    #[test]
+    fn cache_key_includes_the_options_not_just_the_pattern() {
+        // 缓存键若只取 pattern、漏了 opts，就会演出「勾上了忽略大小写却仍按大小写
+        // 匹配」这类鬼故事——正是引入缓存最容易掺进来的错。这里用最直接的行为
+        // 把那条路堵死（PRD §3.9 Q-5）。
+        //
+        // 不断言缓存条数：那是全局共享的，`cargo test` 并行跑会让这种断言随机红。
+        let sensitive = compile(
+            "abc",
+            &RegexOptions {
+                case_insensitive: false,
+                ..opts()
+            },
+        )
+        .expect("应当编译成功");
+        let insensitive = compile(
+            "abc",
+            &RegexOptions {
+                case_insensitive: true,
+                ..opts()
+            },
+        )
+        .expect("应当编译成功");
+
+        assert!(!sensitive.is_match("ABC"), "没勾忽略大小写就不该匹配 ABC");
+        assert!(insensitive.is_match("ABC"), "勾了忽略大小写就该匹配 ABC");
     }
 
     #[test]

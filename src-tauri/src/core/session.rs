@@ -145,7 +145,15 @@ pub fn session_path() -> AppResult<PathBuf> {
 
 /// 读取会话（**永不失败**）：文件缺失 / 不可读 / 坏掉都得到空会话
 pub fn load() -> SessionState {
-    session_path().map(|p| load_from(&p)).unwrap_or_default()
+    match session_path() {
+        Ok(path) => load_from(&path),
+        Err(e) => {
+            // 定位不到数据目录时会话必然恢复不出来。留一条日志，否则「上次打开
+            // 的标签怎么没了」会变成无头案（PRD §3.9 Q-7）。
+            tracing::warn!(error = %e, "无法定位会话文件，本次不恢复会话");
+            SessionState::default()
+        }
+    }
 }
 
 /// 写入会话；返回**实际落盘**（已纠正）的值
@@ -160,9 +168,20 @@ pub fn clear() -> AppResult<()> {
 
 /// 从指定文件读取（测试入口）
 pub fn load_from(path: &Path) -> SessionState {
-    let Ok(raw) = fs::read_to_string(path) else {
-        // 文件不存在（首次启动）或不可读：空会话，不打日志
-        return SessionState::default();
+    let raw = match fs::read_to_string(path) {
+        Ok(s) => s,
+        // 文件不存在是**首次启动的正常路径**，不打日志
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return SessionState::default(),
+        Err(e) => {
+            // 存在却读不出来（权限 / 磁盘故障 / 被占）：会话会静默恢复不出来，
+            // 用户的直观感受是「我的标签页丢了」，必须留下可查的线索
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "会话文件存在但读不出来，本次不恢复会话"
+            );
+            return SessionState::default();
+        }
     };
 
     // 快路径：整份能过就直接用
@@ -182,9 +201,21 @@ pub fn load_from(path: &Path) -> SessionState {
         .get("tabs")
         .and_then(Value::as_array)
         .map(|arr| {
-            arr.iter()
+            let total = arr.len();
+            let parsed: Vec<SessionTab> = arr
+                .iter()
                 .filter_map(|t| serde_json::from_value::<SessionTab>(t.clone()).ok())
-                .collect()
+                .collect();
+            if parsed.len() != total {
+                // 丢掉几个要记一笔：用户打开编辑器发现少了标签，却查不到线索，
+                // 是很难排查的那类问题（PRD §3.9 Q-7）
+                tracing::warn!(
+                    dropped = total - parsed.len(),
+                    total,
+                    "会话里有标签无法解析：坏的丢弃、好的保留"
+                );
+            }
+            parsed
         })
         .unwrap_or_default();
     let active_tab_id = v

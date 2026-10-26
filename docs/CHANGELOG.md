@@ -2253,3 +2253,81 @@ CHANGELOG 里的历史记录不动——改历史记录等于伪造，那些条�
 - 双击打开的文件关联（写注册表）：项目有「便携版不写注册表」的约定
   （`core/embedded.rs`），写 `fileAssociations` 与之冲突；
 - 拖拽文本内容的落点控制。
+
+---
+
+## v0.14.2 — 2026-10-27（发布）
+
+按 **BeautifulRust 1.4.0**（`D:\site\aio1018\BeautifulRust-1.4.0`）的 `rust-review`
+流程审了一遍 `src-tauri/`：跑工具拿机械结果（`fmt` / `clippy` / `test` 全绿，
+default clippy **0 warning**），再按「正确性 → 错误处理 → 惯用法」的优先级人工读代码。
+
+本轮是**稳健性**为主。七项里只有一项（Q-1）是真 bug，其余是把「能用但不对」的表达
+改成「错不了」。
+
+### 功能与修复（PRD §3.9）
+
+| 编号 | 内容 | 位置 |
+|------|------|------|
+| Q-1 | **单位加空格的位置错位（真 bug）** | `core/pipelines.rs` `space_digit_unit` |
+| Q-2 | 批处理中锁中毒时跟着 panic，已有成果全部白丢 | `core/batch.rs:307` |
+| Q-3 | 「读取设置」持锁做磁盘 IO，并发 `load()` 全体干等 | `core/settings.rs:327` |
+| Q-4 | OpenCC 初始化「丢掉 Result 再 expect」，自相矛盾 | `core/opencc.rs:198` |
+| Q-5 | 每次 IPC 都重编译同一个正则 | `core/regex.rs` `compile` |
+| Q-6 | 每次开替换表面板都重扫一遍资源目录 | `core/replace.rs` `ensure_builtin_tables` |
+| Q-7 | 设置 / 会话读不出来时静默走默认值 | `core/settings.rs`、`core/session.rs` |
+
+### Q-1：这是本轮唯一的行为 bug
+
+`space_digit_unit` 原本塞给我看的有序 list 是：取 `line.to_lowercase()` 的字符数组，
+却用**原文**的下标去切它。而 `to_lowercase()` 会改变码点数——`İ`（U+0130）会变成
+`i` + U+0307 两个字符，`ﬁ`（U+FB01）会变成 `fi`。两类字符一旦出现，它**之后**的所有
+位置就都偏了，紧跟的「数字 + 单位」再也认不出来。
+
+复现：一行里写 `İ5kg`，跑整理 pipeline 的「数字后加单位空格」，出来还是 `İ5kg`
+（应当 `İ5 kg`）。
+
+修法是把它整个拿掉：单位表里本来全是 ASCII（`kg` / `mbps` / `lux`…），逐个
+`to_ascii_lowercase` 就够了，不需要先把整行小写化——下标自然与原文一一对应。
+
+动手前先写了一个测试确认它能复现（`"İ5kg"` 出来还是 `"İ5kg"`），改完转绿。
+
+### 几处刻意的取舍
+
+- **Q-2 没有加 `catch_unwind`**。先查了 `run_one_file`：它本身一个 `unwrap` /
+  `expect` / `panic!` 都没有，worker 不会 panic。既然 panic 源不存在，用
+  `catch_unwind` 兜就是纯粹的多余防御（而且 §5 明确反对拿它当控制流）。
+  真正的问题只是 `into_inner().expect(..)` 这个自相矛盾的写法——用了恢复机制却又
+  panic。改成 `unwrap_or_else(|e| e.into_inner())`，并在注释里写清这与
+  「中毒即 panic」那条规则为什么不冲突（那条针对继续用锁，这里是把数据取出来、
+  锁随即销毁）。上面两处 `lock().expect(..)` 保持原语义不变。
+- **Q-6 一度以为不存在**：`embedded::expand` 本来就有 `EXPANDED` 进程内缓存，
+  很容易据此判断「已覆盖」。核实后发现 `ensure_builtin_tables` 根本**不走**那条路，
+  它自己 `create_dir_all` + `read_dir` 逐个复制，面板每开一次就扫一遍。
+  加上 `OnceLock` 标记（该函数是幂等的，且测试里没人依赖它的重复副作用）。
+- **Q-5 的缓存带了上限（64）**：逐键输入会让 key 一路增长，不做限制就是无界内存。
+  超了整体清空——查找的活动本来集中在最近几个 pattern，比维护 LRU 简单得多。
+  另外给 `RegexOptions` 加了 `Hash` 以便做缓存键。
+- **Q-5 的测试不断言缓存条数**：那份缓存是全局的，`cargo test` 并行跑会让这类断言
+  随机变红。改为验证更值钱的东西——同 pattern 但不同 `opts` 必须各得各的结果，
+  堵住「缓存键漏掉 opts → 勾了忽略大小写却无效」这个引入缓存最典型的错。
+- **Q-7 保留了「文件不存在不打日志」**：那是首次启动的正常路径。只有「存在却读
+  不出来」（权限 / 磁盘故障 / 被占）才 warn，带上路径与原因。
+
+### 验证
+
+Rust 全量单测通过（含新增 3 个）、fmt 干净、TSC 0、ESLint 干净、前端 13 测试文件
+通过、default clippy 仍为 0 warning。
+
+**不给冷启动的量化收益**：`rust-best-practices` §12 要求「先测量再优化」，而本会话
+起不来 WebView2（`npm run smoke` 的基线就是等待调试端口超时），拿不到耗时数据。
+故 Q-3 / Q-5 / Q-6 只陈述「少做了多少 IO / 多少次编译」，不宣称快了多少毫秒。
+
+### 未做（沿用你的决定）
+
+- **不接入 BeautifulRust 的 `lints/lints.toml`**：接入后 `missing_docs` /
+  `unwrap_used` 等会暴露约 306 条 pedantic 警告（81 条缺 `# Errors`、42 条文档缺
+  反引号、53 条缺 `#[must_use]`），多为文档项，收益不抵审查成本；
+- **不清这 306 条**，留作后续单独一轮；
+- `core/opencc.rs` 里 5 个缺 `// SAFETY:` 注释的 `unsafe` 块（§8 要求）也留作待办——
+  属文档补齐，本轮不动。

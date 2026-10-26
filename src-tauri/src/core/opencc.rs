@@ -195,8 +195,12 @@ pub fn data_dir() -> AppResult<&'static Path> {
         write_atomic(&target, data.content)?;
     }
     tracing::info!(dir = %dir.display(), files = all_data().len(), "OpenCC 数据已展开");
-    let _ = DATA_DIR.set(dir);
-    Ok(DATA_DIR.get().expect("刚刚写入").as_path())
+    // 原先这里是 `let _ = DATA_DIR.set(dir);` 加一句 `get().expect("刚刚写入")`——
+    // 先把 Result 丢掉、再假定它一定成功，两个动作自相矛盾：真失败了就 panic 在
+    // 这里，而用户只是点了一下「繁简转换」（PRD §3.9 Q-4）。
+    // `get_or_init` 才是这件事的正确工具：没人设过就设并返回，有人设过就返回那
+    // 个，两条路都不会失败。
+    Ok(DATA_DIR.get_or_init(|| dir).as_path())
 }
 
 /// 原子写：先写同目录的临时文件，再 rename 覆盖

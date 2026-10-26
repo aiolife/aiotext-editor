@@ -1,7 +1,7 @@
 {
   "name": "aiotext-editor",
   "private": true,
-  "version": "0.14.1",
+  "version": "0.14.2",
   "description": "AioTextEditor —— 跨平台中文文本编辑器（Rust + Tauri 2 + OpenCC）",
   "type": "module",
   "scripts": {

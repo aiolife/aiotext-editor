@@ -23,6 +23,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use aho_corasick::{AhoCorasickBuilder, MatchKind};
 use serde::{Deserialize, Serialize};
@@ -1044,7 +1045,25 @@ fn builtin_resource_dir(resource_dir: Option<&Path>) -> Option<PathBuf> {
 ///
 /// 幂等：仅复制缺失文件（用户对内置表的改名/删除不会被覆盖回来）；
 /// 返回本次复制的文件数。
+/// 本进程是否已经兜过一次内置表（PRD §3.9 Q-6）
+static BUILTIN_ENSURED: OnceLock<()> = OnceLock::new();
+
 pub fn ensure_builtin_tables(resource_dir: Option<&Path>) -> AppResult<usize> {
+    // 复制本身是幂等的（`dest.exists()` 就跳过），但每次进来仍要 `read_dir` 把资源
+    // 目录扫一遍。替换表面板每开一次就扫一次，而同一个进程里答案不会变——记一笔
+    // 省掉这些重复遍历。
+    //
+    // **失败时不标记**：返回 `Err` 的分支走不到下面那行，下次仍会重试。
+    if BUILTIN_ENSURED.get().is_some() {
+        return Ok(0);
+    }
+    let copied = copy_builtin_tables(resource_dir)?;
+    let _ = BUILTIN_ENSURED.set(());
+    Ok(copied)
+}
+
+/// 真正的内置表复制（由 [`ensure_builtin_tables`] 调用）
+fn copy_builtin_tables(resource_dir: Option<&Path>) -> AppResult<usize> {
     let target = builtin_dir()?;
     let Some(source) = builtin_resource_dir(resource_dir) else {
         tracing::warn!("未找到内置替换表资源目录，跳过复制");
