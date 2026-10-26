@@ -1,6 +1,6 @@
 [package]
 name = "aiotext-editor"
-version = "0.14.0"
+version = "0.14.1"
 description = "AioTextEditor —— 跨平台中文文本编辑器"
 edition = "2021"
 

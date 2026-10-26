@@ -1222,3 +1222,24 @@ export async function startupMetrics(): Promise<StartupMetrics> {
 export async function appVersion(): Promise<string> {
   return invoke<string>('app_version');
 }
+
+/**
+ * 取走「本次启动被拖到图标上」的文件路径（PRD §3.8 D-6 / D-9）
+ *
+ * **取走即清空**，所以只能拉一次——拖一次不该反复打开。这里走「前端主动拉」而
+ * 不是「Rust emit」：启动那一刻前端多半还没注册监听，emit 会丢事件。
+ */
+export async function takeStartupFiles(): Promise<string[]> {
+  return invoke<string[]>('take_startup_files');
+}
+
+/**
+ * 从一串原始路径里挑出可打开的普通文件（PRD §3.8 D-4）
+ *
+ * 界面拖放会把拖进来的**目录**也送进 payload，这里统一滤掉；规则直接复用后端
+ * 的 `keep_openable`，不前后端各写一遍（两边慢慢走偏是迟早的事）。
+ */
+export async function filterOpenablePaths(paths: string[]): Promise<string[]> {
+  if (paths.length === 0) return [];
+  return invoke<string[]>('filter_openable_paths', { paths });
+}

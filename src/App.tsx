@@ -63,6 +63,8 @@ import {
   sessionLoad,
   sessionSave,
   startupMetrics,
+  takeStartupFiles,
+  filterOpenablePaths,
   type AmbiguitySpan,
   type CompareOptions,
   type DiffBlock,
@@ -100,6 +102,7 @@ import {
   mapToOpposite,
   type PaneMarks,
 } from './shared/compareView';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { SELECTION_FILL_LIMIT } from './shared/findText';
 
 /**
@@ -666,6 +669,86 @@ export default function App() {
       }),
     [openFile, runGuarded],
   );
+
+  /**
+   * 逐个打开一组路径——拖拽的两个入口与菜单共用的唯一实现（PRD §3.8）。
+   *
+   * 与「文件 → 打开…」唯一的区别是把 `pickOpenFile()` 换成了外部给的路径数组，
+   * 之后走的完全是同一条链路（store.openFile → fsRead → 编码自动识别 → 新标签 →
+   * 进会话）。故意不复刻第二套打开逻辑：两条路径一旦分离，行为迟早分家。
+   *
+   * 单个文件读失败**不中断**其余文件（拖了 3 个、第 2 个坏了，另两个照常开），
+   * 失败的最后统一报一次。
+   */
+  const openFilePaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+      setBusy(true);
+      setError(null);
+      const failed: string[] = [];
+      try {
+        for (const path of paths) {
+          try {
+            await openFile(path);
+          } catch {
+            failed.push(path);
+          }
+        }
+      } finally {
+        setBusy(false);
+      }
+      if (failed.length > 0) {
+        setError(fill(t(APP.actionFailed), { label: t(ACTION.open), error: failed.join('、') }));
+      }
+    },
+    [openFile],
+  );
+
+  // ---------- 拖拽打开文件（PRD §3.8） ----------
+  //
+  // 三个来源，最后都汇到上面那个 `openFilePaths`：
+  //
+  // | 来源 | 何时触发 | 怎么拿到路径 |
+  // |------|---------|-------------|
+  // | `takeStartupFiles` | 拖到图标、**应用未运行**时 | Windows 把路径作为进程参数给出，前端主动拉取（emit 会丢，见 tauriApi 的注释） |
+  // | `dragdrop-open` | 拖到图标、**应用已运行**时 | 第二个实例被单实例拦截后 emit 过来（跨进程只能走这条路） |
+  // | `tauri://drag-drop` | 拖到**界面**上 | Tauri 内置：Windows 上窗口拖放被 tao 接管，不会把文件当 URL 导航，而是转成这个事件 |
+
+  useEffect(() => {
+    const unlisteners: UnlistenFn[] = [];
+    let cancelled = false;
+
+    // 来源一：启动参数。**必须早于界面拖拽**，它是本次启动唯一一次机会
+    takeStartupFiles()
+      .then((files) => {
+        if (!cancelled) void openFilePaths(files);
+      })
+      .catch(() => {
+        // 拿不到就算了——拖拽不是启动的必要条件，不该因为这条路径失败而开不了编辑器
+      });
+
+    // 来源二：单实例转发（应用已在运行时拖到图标）
+    void listen<string[]>('dragdrop-open', (event) => {
+      void openFilePaths(event.payload ?? []);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisteners.push(fn);
+    });
+
+    // 来源三：界面拖放。payload 里含目录，滤掉（D-4）
+    void listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
+      const raw = event.payload?.paths ?? [];
+      void filterOpenablePaths(raw).then((paths) => void openFilePaths(paths));
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisteners.push(fn);
+    });
+
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, [openFilePaths]);
 
   const handleNew = useCallback(() => {
     newTab();

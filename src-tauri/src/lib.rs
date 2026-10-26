@@ -29,6 +29,18 @@ pub struct StartupMetrics {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let started = std::time::Instant::now();
+
+    // 拖到图标上（应用未运行时）：Windows 把路径作为进程参数给出。
+    //
+    // 先记下来，等前端起来后由它**主动取**（`take_startup_files`）——不在这里 emit，
+    // 因为此刻前端多半还没注册监听，事件会丢（PRD §3.8 落地口径）。
+    let startup_argv: Vec<String> = std::env::args().collect();
+    let startup_files = crate::core::dragdrop::files_from_argv(&startup_argv);
+    if !startup_files.is_empty() {
+        tracing::info!(count = startup_files.len(), "启动参数里有待打开的文件");
+    }
+    crate::core::dragdrop::remember_startup_files(startup_files);
+
     // 默认 INFO；`RUST_LOG=debug` 可放开逐文件的读 / 写日志（见下）。
     //
     // 用 `EnvFilter` 而不是 `with_max_level(INFO)`，是为了让 DEBUG 级日志
@@ -45,9 +57,14 @@ pub fn run() {
     tauri::Builder::default()
         // 单实例（第九阶段）：必须**第一个**注册（插件官方要求）。
         // 第二次启动不再开新窗口，而是把已有窗口带到前台。
-        // `argv` / `cwd` 先忽略，留给后续「用启动参数打开文件」。
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            use tauri::Manager;
+        //
+        // 拖到图标上（应用**已在运行**时）：Windows 会再起一个进程把它拖的文件作为
+        // 参数给出，这里就是把参数交给已经在跑的那个实例——**跨进程只能用 emit**，
+        // 没有共享内存可走。此时第一个实例的前端必然已在监听，不存在丢事件的竞态
+        // （不像启动时那次，故那边用「前端主动拉」、这边用 emit）。
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `emit` 在 `Emitter` 上（跨进程转发要用），窗口查找在 `Manager` 上
+            use tauri::{Emitter, Manager};
             match app.get_webview_window("main") {
                 Some(window) => {
                     let _ = window.unminimize();
@@ -55,6 +72,13 @@ pub fn run() {
                     let _ = window.set_focus();
                 }
                 None => tracing::warn!("单实例回调：找不到主窗口"),
+            }
+            let files = crate::core::dragdrop::files_from_argv(&argv);
+            if !files.is_empty() {
+                tracing::info!(count = files.len(), "第二个实例转发待打开的文件");
+                if let Err(e) = app.emit("dragdrop-open", &files) {
+                    tracing::warn!(error = %e, "转发失败（拖拽进来的文件不会被打开）");
+                }
             }
         }))
         .plugin(tauri_plugin_dialog::init())
@@ -129,6 +153,8 @@ pub fn run() {
             commands::session::session_clear,
             commands::app::startup_metrics,
             commands::app::app_version,
+            commands::app::take_startup_files,
+            commands::app::filter_openable_paths,
         ])
         // 关闭主窗口：默认退出进程；开启「关闭时隐藏」后改为隐藏 + 亮出托盘。
         // 隐藏后再启动走单实例的「聚焦已有窗口」，不再重建 WebView2——
