@@ -103,11 +103,10 @@ pub fn run() {
                 setup_ms,
                 debug_build: cfg!(debug_assertions),
             };
-            // 托盘建好即隐藏；只有开启「关闭时隐藏」且窗口真的被藏起来时才显示
-            // （见 tray 模块头注释）。失败不阻断启动。
-            if let Err(e) = crate::tray::build(app.handle()) {
-                tracing::warn!(error = %e, "托盘创建失败（不影响主流程）");
-            }
+            // 托盘**不在启动时建**：它默认不显示，只有开启「关闭时隐藏」且窗口真的
+            // 被藏起来时才用得上。改由 `tray::set_visible(true)` 按需建——实测繁體
+            // 界面下建一次要 455ms（其中 451ms 是 OpenCC 首次初始化），启动不该付
+            // 这笔钱（PRD §3.10 Q-9）。
             tracing::info!(setup_ms = metrics.setup_ms, "启动完成");
             app.manage(metrics);
             Ok(())

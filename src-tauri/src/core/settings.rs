@@ -387,6 +387,21 @@ pub fn reset_at(path: &Path) -> AppResult<Settings> {
     Ok(Settings::default())
 }
 
+/// 剥掉 UTF-8 BOM。
+///
+/// Windows 记事本「另存为 → UTF-8」写出的文件带 BOM，而 `serde_json` **不接受**
+/// BOM——带 BOM 的 `settings.json` 会让严格解析失败、逐字段恢复也失败，最后整份
+/// 设置静默回落到默认。用户手改过一次设置，就会发现主题、字号、语言全部归零，
+/// 且毫无提示（PRD §3.10 Q-8）。
+///
+/// 剥掉它是零成本的：`strip_prefix` 只比对开头 3 个字节。
+pub(crate) fn strip_bom(s: String) -> String {
+    match s.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_owned(),
+        None => s,
+    }
+}
+
 /// 从指定文件读取（测试入口）
 ///
 /// **不走缓存**——测试要的就是「真的从这块磁盘内容解析出什么」；若走缓存，
@@ -408,6 +423,8 @@ pub fn load_from(path: &Path) -> Settings {
             return Settings::default();
         }
     };
+
+    let raw = strip_bom(raw);
 
     // 快路径：严格解析
     if let Ok(s) = serde_json::from_str::<Settings>(&raw) {
@@ -630,6 +647,41 @@ mod tests {
     fn missing_file_yields_defaults() {
         let path = tmp_path("missing").join("nope").join(SETTINGS_FILE);
         assert_eq!(load_from(&path), Settings::default());
+    }
+
+    #[test]
+    fn bom_prefixed_settings_file_is_still_parsed() {
+        // Windows 记事本「另存为 → UTF-8」写出的文件带 BOM，而 serde_json 不接受
+        // BOM：带 BOM 的 settings.json 会严格解析失败、逐字段恢复也失败，整份设置
+        // 静默回落默认。用户手改一次设置就会发现主题、字号、语言全归零，且毫无
+        // 提示（PRD §3.10 Q-8）。
+        let path = tmp_path("bom").join(SETTINGS_FILE);
+        let s = Settings {
+            hide_on_close: true,
+            appearance: Appearance {
+                theme: Theme::Dark,
+                ..Appearance::default()
+            },
+            ..Settings::default()
+        };
+        save_to(&path, &s).unwrap();
+
+        // 在原本正常的文件前面加 BOM 再读
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("\u{feff}{text}")).unwrap();
+
+        let got = load_from(&path);
+        assert!(got.hide_on_close, "带 BOM 的设置文件不该回落默认");
+        assert_eq!(got.appearance.theme, Theme::Dark);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn strip_bom_leaves_plain_text_alone() {
+        assert_eq!(strip_bom("{}".to_owned()), "{}");
+        assert_eq!(strip_bom("\u{feff}{}".to_owned()), "{}");
+        // 只有开头的那个 U+FEFF 该被剥掉，正文里的零宽空格属于用户内容
+        assert_eq!(strip_bom("\u{feff}a\u{feff}b".to_owned()), "a\u{feff}b");
     }
 
     #[test]

@@ -183,6 +183,8 @@ pub fn load_from(path: &Path) -> SessionState {
             return SessionState::default();
         }
     };
+    // 与设置文件同理：带 BOM 的会话会被 serde_json 整份拒掉（PRD §3.10 Q-8）
+    let raw = crate::core::settings::strip_bom(raw);
 
     // 快路径：整份能过就直接用
     if let Ok(s) = serde_json::from_str::<SessionState>(&raw) {

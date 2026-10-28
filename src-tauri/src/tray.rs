@@ -84,7 +84,18 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// 显示 / 隐藏托盘图标
+///
+/// 托盘是**按需**建的：要显示时才建。默认（关闭即退出）路径下它从不出现，
+/// 也就没必要在启动时付那笔钱——实测繁體界面下一次 [`build`] 要 455ms，其中
+/// 451ms 是 OpenCC 首次初始化（菜单文案要走语言转换）。启动路径上省掉它，
+/// 冷启动从约 1.3s 降到约 0.85s。
 pub fn set_visible(app: &AppHandle, visible: bool) {
+    if visible && app.try_state::<TrayHandle>().is_none() {
+        if let Err(e) = build(app) {
+            tracing::warn!(error = %e, "托盘创建失败（不影响关闭行为）");
+            return;
+        }
+    }
     let Some(handle) = app.try_state::<TrayHandle>() else {
         return; // 托盘没建起来（build 曾失败）：静默忽略，不该影响关闭行为
     };
