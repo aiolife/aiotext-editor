@@ -2477,3 +2477,79 @@ PRD §3.11；PRD §3.3 的「不在范围」也已同步修订。
 
 KaTeX / Mermaid / DOMPurify 及任何大型第三方渲染依赖、代码块语法着色、完整富文本
 WYSIWYG、导出 HTML / PDF、分栏预览、整篇两态切换。
+
+---
+
+## v0.15.1 — 2026-11-06（发布）
+
+参考 **MarkText** 的实时渲染交互与样式取值。**零新增依赖**：没有引入 Muya、任何
+MarkText 包或任何新 npm / crate 包，也没有改动文档模型与 Rust 渲染逻辑。
+需求与取舍见 PRD §3.11「参考 MarkText 的交互与样式取值」。
+
+产物：`AioTextEditor_0.15.1_x64-setup.exe`（4.59 MiB，NSIS）与
+`AioTextEditor_0.15.1_x64_portable.exe`（7.90 MiB，单 exe）。
+
+### 交互：祖先链整体退回源码
+
+MarkText 的 `.mu-active` 会加到光标所在块的整个祖先链。原先 `planMarkdown` 取
+「包含光标且跨度最小」的块，光标落在引用 / 列表内的段落时会出现「`>` 已隐藏、
+但 `**` 显示源码」的半渲染混杂。现改为取**包含光标且跨度最大（最外层）**的块，
+整条祖先链一并退源码；M-2 口径不变（引用 / 列表项 / 表格各算一个块），
+行级样式仍保留以免光标移动跳高。
+
+### 样式：只搬数值，不搬实现
+
+MarkText 主视图是真实 HTML 标签 + `.mu-*` 类名 + CSS 变量主题，`github-markdown-css`
+只在 HTML / PDF 导出时用于 `.markdown-body`。两边选择器模型不兼容，所以只把
+**排版数值**映射到现有 `.cm-md-*` 装饰类上：
+
+| 落点 | 新取值（源自 MarkText） |
+|------|------------------------|
+| `.cm-md-h1..h6` | 1.875 / 1.5 / 1.375 / 1.25 / 1.125 / 1 em，字重统一 700 |
+| `.cm-md-inline-code` | `0.8em`、`padding .2em .4em`、圆角 3px |
+| 链接 / 脚注 / TOC | `--md-link-color: rgb(20 86 240)`；深色主题切 `#58a6ff` |
+| `.cm-md-quote` | 2px 竖线、左内边距 1.875em（30px @16px） |
+| `.cm-md-code` | `0.9em` |
+| `.cm-md-cell` | 横向留白 0.8em（MarkText `6px 13px`） |
+| `.cm-md-li-2..4` | 1.875em 步进（MarkText 每层 30px） |
+| `.cm-md-footnote` | `0.7em` pill |
+| `.cm-md-code-lang` | `font-weight: 600`，去掉原来的全大写 |
+
+**保留项**：`==高亮==` 黄色（两边都无对应色）、复选框原生方形（未采用 MarkText 的
+18px 圆形，维持 GitHub 观感）、永不生成 `<a href>` 的安全策略、不可见字符按行互斥。
+MarkText 的标题阶梯不是严格 GitHub（h1 1.875em vs GitHub 2em），若要逐项对齐
+GitHub Markdown 视觉需另开一轮。
+
+### 验证
+
+- 前端：`vitest` **14 个文件 220 项**全过（新增 2 项交互不变量：祖先链退源码、
+  代码块内整块退源码）；`tsc -b`、`eslint .` 0 问题；`npm run build` 通过。
+- 构建产物核对：Vite 输出的 CSS 含 `--md-link-color`、`prefers-color-scheme`、
+  1.875em 与新 padding；旧值 `#1a73e8` / 1.55em / 1.35em 已消失。深色主题规则
+  随产物核对，未单独截深色窗口图。
+- Rust：`cargo fmt --check` 干净、**284 项**单测通过、`cargo clippy -D warnings`
+  0 warning。顺手清掉 Rust 1.99 新 lint 在 `tray.rs` 报的 1 条 `needless_borrow`
+  （与渲染改动无关）。
+- **GUI 视觉验收**（v0.15.1 release 二进制真实窗口截图，与 v0.15.0 同款流程）：
+  - `.md`：标题 1.875 / 1.5 / 1.375em 阶梯清晰且 `#` 隐藏、`[TOC]` 生成蓝色嵌套
+    可点击目录、行内代码 / 粗体 / 链接 / 黄色高亮、表格表头与分隔线、代码块灰底
+    与语言名、脚注 pill、方形任务框均正常；光标所在第 1 行仍显示
+    `# Markdown 语法` 源码而其余块已渲染，Live Preview 生效；
+  - `.txt`：`#` / `[TOC]` / `**` 全为纯文本，`·` / `¬` / `¶` 照常画，与加入本
+    功能之前完全一致；
+  - 另用专门构造的样式文档确认引用 2px 竖线 + 30px 内边距、嵌套列表
+    1.875em 递进都生效。
+
+### GUI 验收发现并修掉的一个坑
+
+首轮截图里引用竖线在、但文字没有右移 30px：CodeMirror **运行时注入**的
+`.cm-line { padding: 0 2px 0 6px }` 与我们的单类选择器同级且注入更晚，把
+`Decoration.line` 上的 `padding-left` 覆盖了（v0.15.0 的列表缩进其实也一直受此
+影响，只是没被目视发现）。改为 `.cm-line.cm-md-quote` / `.cm-line.cm-md-li-*`
+双类选择器提高特异性后，重新打包并重新截图确认生效。
+
+### 不在范围（沿用 v0.15.0，永久）
+
+KaTeX / Mermaid / DOMPurify 及任何大型第三方渲染依赖、块树 / `contenteditable`、
+双引擎与整篇两态切换、代码块语法着色、完整富文本 WYSIWYG、导出 HTML / PDF、
+分栏预览、渲染态 WYSIWYG 排版。

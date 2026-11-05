@@ -2119,46 +2119,65 @@ body,
  * Markdown 实时渲染（PRD §3.11）
  *
  * 全部是 CodeMirror 的 Decoration class，文档本身仍是纯文本。
- * 配色沿用项目的系统色策略（color-scheme: light dark），只用半透明叠加与
- * currentColor，深浅主题自动适配，不写死色值。
+ * 排版尺度参考 MarkText / Muya（packages/muya/src/assets/styles/*.css）的取值：
+ * 只搬数值，不搬它的 DOM 模型 / 选择器 / 依赖——那边是真实 HTML 标签 +
+ * .mu-* class，这边只能把值映射到 .cm-md-* 上。
+ * 配色除链接色外一律用半透明叠加与 currentColor，深浅主题自动适配。
  * ========================================================================== */
 
-/* 标题：只改字号 / 字重，不改行内结构 */
-.cm-md-h1 { font-size: 1.55em; font-weight: 700; }
-.cm-md-h2 { font-size: 1.35em; font-weight: 700; }
-.cm-md-h3 { font-size: 1.20em; font-weight: 650; }
-.cm-md-h4 { font-size: 1.10em; font-weight: 650; }
-.cm-md-h5 { font-size: 1.05em; font-weight: 600; }
-.cm-md-h6 { font-size: 1.00em; font-weight: 600; opacity: 0.85; }
+/* MarkText 的 --link-color；深色下换成 GitHub 深色链接色以保证可读 */
+:root {
+  --md-link-color: rgb(20 86 240);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --md-link-color: #58a6ff;
+  }
+}
+
+/* 标题：MarkText 的 1.875 / 1.5 / 1.375 / 1.25 / 1.125 / 1em 阶梯，字重统一 bold。
+   只改字号 / 字重，不动 margin 与 line-height，避免破坏 CodeMirror 行高测量。 */
+.cm-md-h1 { font-size: 1.875em; font-weight: 700; }
+.cm-md-h2 { font-size: 1.5em; font-weight: 700; }
+.cm-md-h3 { font-size: 1.375em; font-weight: 700; }
+.cm-md-h4 { font-size: 1.25em; font-weight: 700; }
+.cm-md-h5 { font-size: 1.125em; font-weight: 700; }
+.cm-md-h6 { font-size: 1em; font-weight: 700; }
 
 /* 行内 */
 .cm-md-bold { font-weight: 700; }
 .cm-md-italic { font-style: italic; }
 .cm-md-strike { text-decoration: line-through; opacity: 0.75; }
+/* ==高亮== 是本项目自定义语法，MarkText / GitHub 都无对应色，保留黄色 */
 .cm-md-highlight { background: rgba(255, 214, 0, 0.35); border-radius: 2px; }
 .cm-md-inline-code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.8em;
   background: rgba(128, 128, 128, 0.16);
   border-radius: 3px;
-  padding: 0 2px;
+  padding: 0.2em 0.4em;
 }
-.cm-md-link { color: #1a73e8; text-decoration: underline; text-underline-offset: 2px; }
+.cm-md-link { color: var(--md-link-color); text-decoration: underline; text-underline-offset: 2px; }
 .cm-md-link-unsafe { color: #b3261e; text-decoration: line-through; cursor: not-allowed; }
 .cm-md-code-lang {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.85em;
+  font-weight: 600;
   opacity: 0.65;
-  text-transform: uppercase;
 }
 
-/* 块级 */
-.cm-md-quote {
-  border-left: 3px solid rgba(128, 128, 128, 0.55);
-  padding-left: 0.7em;
+/* 块级：MarkText 的引用是 2px 竖线 + 30px 内边距，代码块 90% 字号。
+   CodeMirror 运行时注入的 `.cm-line { padding: 0 2px 0 6px }` 与单类选择器同级
+   且注入更晚，会吞掉 line 装饰的 padding-left；故引用 / 列表缩进一律用
+   `.cm-line.cm-md-*` 双类选择器提高特异性（GUI 验收实测发现并修正）。 */
+.cm-line.cm-md-quote {
+  border-left: 2px solid rgba(128, 128, 128, 0.55);
+  padding-left: 1.875em;
   opacity: 0.9;
 }
 .cm-md-code {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.9em;
   background: rgba(128, 128, 128, 0.12);
 }
 .cm-md-footnote-def {
@@ -2167,9 +2186,9 @@ body,
   border-top: 1px solid rgba(128, 128, 128, 0.3);
 }
 
-/* 表格：单元格略对齐；分隔行压成一条线 */
+/* 表格：单元格留白参考 MarkText 的 6px 13px；分隔行压成一条线 */
 .cm-md-table-head { font-weight: 650; background: rgba(128, 128, 128, 0.10); }
-.cm-md-cell { display: inline-block; min-width: 6ch; }
+.cm-md-cell { display: inline-block; min-width: 6ch; padding: 0 0.8em; }
 .cm-md-table-sep {
   height: 1px;
   line-height: 0;
@@ -2179,24 +2198,28 @@ body,
   border-bottom: 1px solid rgba(128, 128, 128, 0.45);
 }
 
-/* 列表缩进层级 */
-.cm-md-li-2 { padding-left: 1.4em; }
-.cm-md-li-3 { padding-left: 2.8em; }
-.cm-md-li-4 { padding-left: 4.2em; }
+/* 列表缩进层级：MarkText 嵌套列表每层 30px（1.875em @16px） */
+.cm-line.cm-md-li-2 { padding-left: 1.875em; }
+.cm-line.cm-md-li-3 { padding-left: 3.75em; }
+.cm-line.cm-md-li-4 { padding-left: 5.625em; }
 .cm-md-bullet, .cm-md-ordered {
   color: rgba(128, 128, 128, 0.9);
   user-select: none;
   margin-right: 0.35em;
 }
+/* 复选框保留原生方形（GitHub 观感），不采用 MarkText 的 18px 圆形 */
 .cm-md-checkbox {
   vertical-align: middle;
   margin: 0 0.4em 0 0;
   cursor: pointer;
 }
+/* 脚注引用：MarkText 的 0.7em pill；widget 本身是 <sup>，无需再写 vertical-align */
 .cm-md-footnote {
-  font-size: 0.75em;
-  color: #1a73e8;
-  vertical-align: super;
+  font-size: 0.7em;
+  color: var(--md-link-color);
+  padding: 0 0.4em;
+  background: rgba(128, 128, 128, 0.16);
+  border-radius: 3px;
   user-select: none;
 }
 
@@ -2207,7 +2230,7 @@ body,
   margin: 2px 0;
   user-select: none;
 }
-.cm-md-toc-item { color: #1a73e8; cursor: pointer; line-height: 1.5; }
+.cm-md-toc-item { color: var(--md-link-color); cursor: pointer; line-height: 1.5; }
 .cm-md-toc-item:hover { text-decoration: underline; }
 .cm-md-toc-l2 { padding-left: 1.2em; }
 .cm-md-toc-l3 { padding-left: 2.4em; }

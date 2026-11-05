@@ -67,7 +67,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                restore(&tray.app_handle());
+                restore(tray.app_handle());
             }
         });
 

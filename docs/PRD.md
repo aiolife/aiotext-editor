@@ -686,6 +686,46 @@ v0.9 起**转换与整理分成两条菜单**：「简繁」只装简繁转换�
   由组件层转成 CodeMirror `Decoration`。vitest 是 node 环境、无 DOM，这样单测能直接
   断言语法树与偏移，不需要引入 `jsdom`。
 
+#### 参考 MarkText 的交互与样式取值（v0.15.1 增补）
+
+对 `marktext/marktext`（`develop`，MIT，仍活跃）做过冲突检查：它是 Muya 块树 +
+`contenteditable` + snabbdom，以 `JSONState` 为文档源，另有 CodeMirror 5 源码模式；
+依赖 KaTeX / Mermaid / DOMPurify / Prism / `github-markdown-css`，CSS 走真实 HTML
+标签与 `.mu-*` 类名。其**架构与本项目 PRD 全线冲突**，因此本轮只借鉴交互语义与
+排版数值，**不引入 Muya 或任何 MarkText 依赖，不新增任何 npm / crate 包**。
+
+**交互对齐**：MarkText 的 `.mu-active` 会加到光标所在块的**整个祖先链**。本项目原先
+取「包含光标且跨度最小」的块，光标落在引用 / 列表内的段落时会出现「`>` 已隐藏、
+但 `**` 显示源码」的半渲染混杂。现改为取**包含光标且跨度最大（最外层）**的块，
+整条祖先链一并退回源码。M-2 口径不变——本节本就规定引用 / 列表项 / 表格各算一个块。
+行级样式仍保留，光标移动不跳高；新增 2 项单测固化该契约。
+
+**样式取值映射**（只搬数值到 `.cm-md-*`，不搬 DOM / 选择器 / 类名）：
+
+| 项目 | MarkText 值 | 落点 |
+|------|------------|------|
+| 标题阶梯 | 1.875 / 1.5 / 1.375 / 1.25 / 1.125 / 1 em，字重 bold | `.cm-md-h1..h6` |
+| 行内代码 | `0.8em`、`padding .2em .4em`、圆角 3px | `.cm-md-inline-code` |
+| 链接色 | `--link-color: rgb(20 86 240)` | `--md-link-color`，深色下切 `#58a6ff` |
+| 引用 | 2px 竖线 + 30px 内边距 | `.cm-md-quote`（2px + 1.875em） |
+| 代码块 | 90% 字号 | `.cm-md-code` |
+| 表格单元格 | `6px 13px` 留白 | `.cm-md-cell`（横向 0.8em） |
+| 嵌套列表 | 每层 30px | `.cm-md-li-2..4`（1.875em 步进） |
+| 脚注引用 | `0.7em` pill | `.cm-md-footnote` |
+| 代码语言名 | `font-weight: 600` | `.cm-md-code-lang` |
+
+**line 装饰的 padding 坑**：CodeMirror 运行时注入的 `.cm-line { padding: 0 2px 0 6px }`
+与单类选择器同级且注入更晚，会吞掉 `Decoration.line` 上的 `padding-left`。故引用与
+列表缩进一律写成 `.cm-line.cm-md-*` 双类选择器提高特异性（v0.15.1 GUI 验收实测
+发现并修正；v0.15.0 的列表缩进其实也一直受此影响，只是没被目视发现）。
+
+**明确不搬**：真实 HTML 标签 / `.mu-*` 选择器、`.markdown-body` 与 `github-markdown-css`
+（MarkText 只在 HTML / PDF 导出时用，编辑器主视图不用）、块树与 `contenteditable`、
+双引擎与整篇两态切换、KaTeX / Mermaid / DOMPurify，以及 MarkText 的 18px 圆形复选框
+（保留 GitHub 方形观感）。`==高亮==` 是本项目自定义语法，两边都没有对应色，保留黄色。
+另需注意 MarkText 的标题阶梯并非严格 GitHub（h1 1.875em vs GitHub 2em）；若要逐项
+对齐 GitHub Markdown 视觉，需另开一轮。
+
 #### 不在范围（永久）
 
 - KaTeX、Mermaid、DOMPurify 及任何大型第三方渲染 / 净化依赖；

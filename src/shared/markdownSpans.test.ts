@@ -129,6 +129,29 @@ describe('planMarkdown', () => {
     expect(inSecond.ops).toContainEqual({ type: 'line', at: 0, cls: 'cm-md-h2' });
   });
 
+  it('Live Preview：祖先链整体退源码，不出现半渲染混杂（对齐 MarkText .mu-active）', () => {
+    const text = '> 引用 **粗**\n\n- 列表 *斜*';
+    const p = plan(text, text.indexOf('粗'));
+    expect(p.activeBlock).not.toBeNull();
+    // 引用符 > 与 ** 都重新可见；只取最小块时 > 会残留隐藏
+    expect(p.ops.some((o) => o.type === 'hide' && o.from === 0)).toBe(false);
+    expect(p.ops.some((o) => o.type === 'mark' && o.cls === 'cm-md-bold')).toBe(false);
+    // 光标之外的列表块仍保持渲染
+    expect(p.ops.some((o) => o.type === 'mark' && o.cls === 'cm-md-italic')).toBe(true);
+    // 行级样式一律保留，光标移动不跳高
+    expect(p.ops.some((o) => o.type === 'line' && o.cls === 'cm-md-quote')).toBe(true);
+    expect(p.ops.some((o) => o.type === 'line' && o.cls.startsWith('cm-md-li-'))).toBe(true);
+  });
+
+  it('Live Preview：光标落在代码块内时整块退源码，围栏重新可见', () => {
+    const text = '```ts\nconst a = 1;\n```\n\n## 标题';
+    const p = plan(text, text.indexOf('const'));
+    expect(p.ops.some((o) => o.type === 'hide' && o.from === 0)).toBe(false);
+    expect(p.ops.some((o) => o.type === 'line' && o.cls === 'cm-md-code')).toBe(true);
+    // 标题块不在光标处，仍然渲染（# 隐藏）
+    expect(p.ops.some((o) => o.type === 'hide' && o.from === text.indexOf('##'))).toBe(true);
+  });
+
   it('装饰指令按位置严格有序（Decoration.set 的前提）', () => {
     const { ops } = plan('# 一\n\n**粗** 与 *斜* 与 [链](https://a.com)\n\n> 引用\n\n| A | B |\n| - | - |\n| 1 | 2 |');
     const starts = ops.map((o) => (o.type === 'line' ? o.at : o.from));

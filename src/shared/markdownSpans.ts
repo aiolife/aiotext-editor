@@ -194,14 +194,18 @@ export function planMarkdown(
     markLine(pos);
   };
 
-  // ---- 1. 光标所在的最小块 ----
+  // ---- 1. 光标所在块（含祖先链） ----
+  // 取「包含光标且跨度最大」的块，即最外层块。MarkText 的 .mu-active 会加到
+  // 整个祖先链上；只取最小块时，光标落在引用 / 列表内的段落会出现
+  // 「> 已隐藏、但 ** 显示源码」这种半渲染混杂态。
+  // 最外层也正好对应 PRD §3.11 的口径：引用 / 列表项 / 表格各算一个块。
   let activeBlock: [number, number] | null = null;
   tree.iterate({
     from: Math.max(0, cursor - 1),
     to: Math.min(doc.length, cursor + 1),
     enter: (n) => {
       if (!BLOCK_NODES.has(n.name) || cursor < n.from || cursor > n.to) return;
-      if (!activeBlock || n.to - n.from < activeBlock[1] - activeBlock[0]) {
+      if (!activeBlock || n.to - n.from > activeBlock[1] - activeBlock[0]) {
         activeBlock = [n.from, n.to];
       }
     },
