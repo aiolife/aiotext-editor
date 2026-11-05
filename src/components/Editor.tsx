@@ -43,6 +43,8 @@ import {
 import { indentUnit } from '@codemirror/language';
 import type { EditorTab } from '../store/tabsStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { isMarkdownLine } from '../shared/markdownSpans';
+import { NO_MARKDOWN, markdownCompartment, markdownExt } from './markdownView';
 import { type VRect, nextColRect, nextRowRect } from '../shared/columnRect';
 
 /** 外部发起的文档替换（如「简繁转换」写入整篇或选区） */
@@ -567,6 +569,14 @@ interface InvisibleFlags {
   spaces: boolean;
   lineEnds: boolean;
   paragraphs: boolean;
+  /**
+   * Markdown 渲染开启时跳过含语法的行（PRD §3.11 M-7）。
+   *
+   * 渲染层会用 `Decoration.replace` 隐藏 `#` / `**` 等标记符，而这里逐空格也用
+   * `Decoration.replace`；两者叠在同一位置会互相吞掉、甚至让 `Decoration.set`
+   * 报「区间无序」。预览态本来也不需要校对符号，故让两套装饰按行互斥。
+   */
+  skipMarkdownLines?: boolean;
 }
 
 /** 符号 widget：一个小程序渲染一枚「不会进入文档」的字符 */
@@ -617,6 +627,12 @@ function buildInvisible(view: EditorView, flags: InvisibleFlags): DecorationSet 
     while (pos <= to) {
       const line = doc.lineAt(pos);
       const text = line.text;
+      // Markdown 渲染开启时，这些行已被渲染层的 replace 装饰占用，不画不可见字符
+      if (flags.skipMarkdownLines && isMarkdownLine(text)) {
+        if (line.to >= to) break;
+        pos = line.to + 1;
+        continue;
+      }
       if (flags.spaces) {
         for (let index = 0; index < text.length; index += 1) {
           const ch = text[index];
@@ -692,6 +708,13 @@ export function Editor({
   const showSpaces = useSettingsStore((s) => s.settings.appearance.showSpaces);
   const showLineEnds = useSettingsStore((s) => s.settings.appearance.showLineEnds);
   const showParagraphMarks = useSettingsStore((s) => s.settings.appearance.showParagraphMarks);
+  const markdownPreview = useSettingsStore((s) => s.settings.appearance.markdownPreview);
+  /**
+   * Markdown 实时渲染只在 `.md` / `.markdown` 上自动开启，且受全局设置开关控制
+   * （PRD §3.11）。`tab.filePath` 为 null 的新文件按纯文本处理，避免「刚新建就
+   * 开始渲染」这种意外。
+   */
+  const markdownOn = markdownPreview && /\.(md|markdown)$/i.test(tab.filePath ?? '');
   /** 挂载时用的初值（挂载后由下面的 reconfigure effect 接管） */
   const displayRef = useRef({
     showLineNumber,
@@ -701,6 +724,7 @@ export function Editor({
     showSpaces,
     showLineEnds,
     showParagraphMarks,
+    markdownOn,
   });
   // 只读是窗格级属性（F-06 比较对照窗）：挂载时固定即可
   const readOnlyRef = useRef(readOnly ?? false);
@@ -743,11 +767,24 @@ export function Editor({
             spaces: showSpaces,
             lineEnds: showLineEnds,
             paragraphs: showParagraphMarks,
+            skipMarkdownLines: markdownOn,
           }),
         ),
+        // 独立的 Compartment：不要塞进 invisibleCompartment，否则每次切行号 /
+        // 字号都会把语法树与渲染插件一起重建（PRD §3.11 落地口径）。
+        markdownCompartment.reconfigure(markdownOn ? markdownExt() : NO_MARKDOWN),
       ],
     });
-  }, [showLineNumber, wrap, tabWidth, insertSpaces, showSpaces, showLineEnds, showParagraphMarks]);
+  }, [
+    showLineNumber,
+    wrap,
+    tabWidth,
+    insertSpaces,
+    showSpaces,
+    showLineEnds,
+    showParagraphMarks,
+    markdownOn,
+  ]);
 
   // 切换标签：整体替换 doc 并恢复记录的光标行
   useEffect(() => {
@@ -960,8 +997,11 @@ export function Editor({
             spaces: display.showSpaces,
             lineEnds: display.showLineEnds,
             paragraphs: display.showParagraphMarks,
+            skipMarkdownLines: display.markdownOn,
           }),
         ),
+        // Markdown 增量语法树 + 渲染插件；不开启时是空数组，零开销
+        markdownCompartment.of(display.markdownOn ? markdownExt() : NO_MARKDOWN),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         // 行互换要标黄当前行，所以 Alt+↑ / Alt+↓ 不能只交给 defaultKeymap 那一版：

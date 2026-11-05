@@ -2396,3 +2396,84 @@ BOM**，后果是主题、字号、语言全部归零，且毫无提示。已在
 
 `run()` → `setup enter` 那 549 ms（Tauri 自身开销）与前端 294 ms 的挂载**未动**——
 本轮没有足够依据去动插件列表或前端打包。要再往下压，得先在这两段里插桩取数。
+
+---
+
+## v0.15.0 — 2026-11-05（发布）
+
+按 `docs/Markdown.md` 的语法清单加了 **Markdown 实时渲染**。需求与验收标准见
+PRD §3.11；PRD §3.3 的「不在范围」也已同步修订。
+
+### 交互模型：Live Preview
+
+`docs/Markdown.md:3` 定的是「实时能看到每个块的渲染效果，鼠标点击到哪一行，就显示
+源码」。即**同一编辑区**里：光标所在块显示源码、其余块显示渲染效果；文档内容永远是
+纯文本，源文件只保留标记。
+
+- 不做分栏预览，不做「整篇源码 / 整篇渲染」两态切换。
+- 「哪一行」按**光标所在块**处理（标题 / 段落 / 列表项 / 引用 / 代码块 / 表格），
+  否则代码块与表格会被光标撕成一半源码一半渲染。
+- 光标所在块保留行级样式（标题字号、引用框、代码块底色），只撤掉行内渲染，
+  避免光标移动时整行跳高。
+
+### 支持范围
+
+| 支持 | 实现 |
+|------|------|
+| 标题 `#`~`######`、粗体 / 斜体 / 删除线、行内代码、链接 | lezer 语法树（GFM 扩展） |
+| 引用块、有序 / 无序列表（含嵌套）、任务列表（可点击复选框） | 同上 |
+| 表格（含对齐）、代码围栏 | 同上 |
+| `==高亮==`、脚注 `[^1]` 自动编号、`[TOC]` 可点击嵌套目录 | 自定义扫描（lezer 无节点；后两项 lezer 会误认成 `Link`，已专门排除） |
+
+**永久不做**（按你的决定）：KaTeX 数学公式、Mermaid 流程图、DOMPurify 及任何大型
+第三方渲染 / 净化依赖。`docs/Markdown.md` 速查表里的这两段在编辑器中保持源码显示，
+用该文件验收时不把它们当作未实现缺陷。代码块也不做语法着色。
+
+### 依赖：零新增包
+
+`@codemirror/lang-markdown` 与 `@lezer/markdown` **本来就在 lock 里**（前者是直接依赖，
+后者是传递依赖且源码零引用）。本轮只把 `@lezer/markdown` 补成直接声明，包数量与
+安装体积都没变。实测对比过体积才决定不引大依赖：`mermaid` unpacked **117.9 MB**、
+`katex` 3.9 MB、`dompurify` 1.5 MB。
+
+不引净化库也不是疏漏：装饰层只用 `createElement` + `textContent`，**从不 `innerHTML`**；
+链接从不生成 `<a href>`，协议白名单之外的（`javascript:` / `data:` …）只标成不可用的
+样式，不产生可点击元素。
+
+### 关键设计
+
+- **增量语法树**：`markdown({ extensions: [GFM, Table, TaskList, Strikethrough] })` 挂进
+  独立 Compartment，`syntaxTree(state)` 由 CodeMirror 增量维护；只处理 `visibleRanges`。
+  不用每次击键全量 `parse`，这是百万字文档目标（PRD §3.5）的前提。
+- **独立 Compartment**：现有 `invisibleCompartment` 每改任一外观项都整体 reconfigure，
+  渲染插件塞进去会随切行号 / 字号全量重算。
+- **纯函数层**：`src/shared/markdownSpans.ts` 把「树 → 装饰指令」抽成不依赖 DOM 的纯
+  数据，vitest 的 node 环境就能断言语法覆盖与偏移，不需要引入 `jsdom`。
+- **UTF-16 偏移无需换算**：lezer 与 CodeMirror 都按 JS string 码元计偏移，与项目全局
+  口径一致（不要照搬 Rust 侧的码点 / 字节换算）。
+- **标记符与内容不重叠**：`mark` 只覆盖内容、`hide` 只覆盖标记符，两者区间不相交，
+  避开 CodeMirror「replace 与 inline mark 叠在同位置互相吞掉」的坑。
+- **空格互斥（M-7）**：默认全开的「显示空格」逐空格也用 `Decoration.replace`。Markdown
+  渲染开启时，含语法的行跳过 `·` / `¬` / `¶`，其余普通文本行照常画。
+- **开启策略**：按 `EditorTab.filePath` 判断，`.md` / `.markdown` 自动开启；其余一律
+  纯文本（`.txt` 用户行为完全不变）。新增设置项「Markdown 实时渲染」可全局关闭。
+  另存为对话框补了 `.md` 过滤器。
+
+### 验证
+
+- 新增 `src/shared/markdownSpans.test.ts` **15 项**：标题 / 行内 / 高亮 / 脚注编号 /
+  TOC 层级 / 任务框 / 链接协议白名单 / 代码块内不误渲染 / Live Preview / 指令严格有序 /
+  `isMarkdownLine`。
+- 全量：Rust 单测通过、fmt 干净、default clippy 0 warning、TSC 0、ESLint 0、前端
+  **14 个文件 218 项测试**全过。
+- **真实 GUI 视觉验收**（不是只跑单测）：用启动参数分别打开 `docs/Markdown.md` 与同内容
+  的 `.txt`，截窗口图对比：
+  - `.md`：`[TOC]` 渲染成可点击的嵌套目录（标题层级正确）、标题分级且 `#` 隐藏、
+    代码块底色、**光标所在的第 1 行显示 `# Markdown 语法` 源码**而第 7 / 17–19 行
+    已渲染 —— Live Preview 生效；
+  - `.txt`：`#` 保留、`[TOC]` 是纯文本、空格照常画 `·`，与加入本功能之前完全一致。
+
+### 不在范围（永久）
+
+KaTeX / Mermaid / DOMPurify 及任何大型第三方渲染依赖、代码块语法着色、完整富文本
+WYSIWYG、导出 HTML / PDF、分栏预览、整篇两态切换。

@@ -41,6 +41,8 @@ export const DEFAULT_SETTINGS: Settings = {
     showSpaces: true,
     showLineEnds: true,
     showParagraphMarks: true,
+    // Markdown 实时渲染总开关（仅 .md / .markdown 生效，PRD §3.11）
+    markdownPreview: true,
     theme: 'system',
   },
   editor: {

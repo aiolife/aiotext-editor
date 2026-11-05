@@ -127,6 +127,12 @@ pub struct Appearance {
     pub show_line_ends: bool,
     /// 显示换段符（`¶`，只在段落的最后一行显示；开了它时该位置优先画 `¶` 而非行尾符）
     pub show_paragraph_marks: bool,
+    /// Markdown 实时渲染总开关（PRD §3.11）
+    ///
+    /// 只对 `.md` / `.markdown` 生效；关掉后所有文件一律纯文本。
+    /// 默认开启，但**只有上述扩展名**才真的渲染，故不影响既有 `.txt` 用户。
+    /// 缺字段时由 struct 级的 `#[serde(default)]` 回落到下面的 `Default` 值。
+    pub markdown_preview: bool,
     /// 主题
     pub theme: Theme,
 }
@@ -143,6 +149,7 @@ impl Default for Appearance {
             show_spaces: true,
             show_line_ends: true,
             show_paragraph_marks: true,
+            markdown_preview: true,
             theme: Theme::System,
         }
     }

@@ -83,7 +83,8 @@ export async function pickSaveFile(defaultName?: string): Promise<string | null>
       title: '另存为',
       defaultPath: withExt,
       filters: [
-        { name: '文本文件 (*.txt)', extensions: ['txt'] },
+        // Markdown 实时渲染按扩展名判定（PRD §3.11），另存为要能直接选 .md
+        { name: '文本文件 (*.txt, *.md)', extensions: ['txt', 'md', 'markdown'] },
         { name: '全部文件', extensions: ['*'] },
       ],
     })) ?? null
@@ -1044,6 +1045,8 @@ export interface AppearanceSettings {
   showLineEnds: boolean;
   /** 显示换段符 `¶`（段落最后一行；优先于行尾符） */
   showParagraphMarks: boolean;
+  /** Markdown 实时渲染总开关（仅 `.md` / `.markdown` 生效，PRD §3.11） */
+  markdownPreview: boolean;
   theme: Theme;
 }
 

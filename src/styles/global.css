@@ -2115,6 +2115,107 @@ body,
   font-size: var(--app-font-size, inherit);
 }
 
+/* ==========================================================================
+ * Markdown 实时渲染（PRD §3.11）
+ *
+ * 全部是 CodeMirror 的 Decoration class，文档本身仍是纯文本。
+ * 配色沿用项目的系统色策略（color-scheme: light dark），只用半透明叠加与
+ * currentColor，深浅主题自动适配，不写死色值。
+ * ========================================================================== */
+
+/* 标题：只改字号 / 字重，不改行内结构 */
+.cm-md-h1 { font-size: 1.55em; font-weight: 700; }
+.cm-md-h2 { font-size: 1.35em; font-weight: 700; }
+.cm-md-h3 { font-size: 1.20em; font-weight: 650; }
+.cm-md-h4 { font-size: 1.10em; font-weight: 650; }
+.cm-md-h5 { font-size: 1.05em; font-weight: 600; }
+.cm-md-h6 { font-size: 1.00em; font-weight: 600; opacity: 0.85; }
+
+/* 行内 */
+.cm-md-bold { font-weight: 700; }
+.cm-md-italic { font-style: italic; }
+.cm-md-strike { text-decoration: line-through; opacity: 0.75; }
+.cm-md-highlight { background: rgba(255, 214, 0, 0.35); border-radius: 2px; }
+.cm-md-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: rgba(128, 128, 128, 0.16);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.cm-md-link { color: #1a73e8; text-decoration: underline; text-underline-offset: 2px; }
+.cm-md-link-unsafe { color: #b3261e; text-decoration: line-through; cursor: not-allowed; }
+.cm-md-code-lang {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.85em;
+  opacity: 0.65;
+  text-transform: uppercase;
+}
+
+/* 块级 */
+.cm-md-quote {
+  border-left: 3px solid rgba(128, 128, 128, 0.55);
+  padding-left: 0.7em;
+  opacity: 0.9;
+}
+.cm-md-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: rgba(128, 128, 128, 0.12);
+}
+.cm-md-footnote-def {
+  font-size: 0.9em;
+  opacity: 0.8;
+  border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+/* 表格：单元格略对齐；分隔行压成一条线 */
+.cm-md-table-head { font-weight: 650; background: rgba(128, 128, 128, 0.10); }
+.cm-md-cell { display: inline-block; min-width: 6ch; }
+.cm-md-table-sep {
+  height: 1px;
+  line-height: 0;
+  font-size: 0;
+  color: transparent;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.45);
+}
+
+/* 列表缩进层级 */
+.cm-md-li-2 { padding-left: 1.4em; }
+.cm-md-li-3 { padding-left: 2.8em; }
+.cm-md-li-4 { padding-left: 4.2em; }
+.cm-md-bullet, .cm-md-ordered {
+  color: rgba(128, 128, 128, 0.9);
+  user-select: none;
+  margin-right: 0.35em;
+}
+.cm-md-checkbox {
+  vertical-align: middle;
+  margin: 0 0.4em 0 0;
+  cursor: pointer;
+}
+.cm-md-footnote {
+  font-size: 0.75em;
+  color: #1a73e8;
+  vertical-align: super;
+  user-select: none;
+}
+
+/* [TOC] 目录 */
+.cm-md-toc {
+  border-left: 3px solid rgba(128, 128, 128, 0.4);
+  padding: 2px 0 2px 0.8em;
+  margin: 2px 0;
+  user-select: none;
+}
+.cm-md-toc-item { color: #1a73e8; cursor: pointer; line-height: 1.5; }
+.cm-md-toc-item:hover { text-decoration: underline; }
+.cm-md-toc-l2 { padding-left: 1.2em; }
+.cm-md-toc-l3 { padding-left: 2.4em; }
+.cm-md-toc-l4 { padding-left: 3.6em; }
+.cm-md-toc-l5 { padding-left: 4.8em; }
+.cm-md-toc-l6 { padding-left: 6.0em; }
+.cm-md-toc-empty { opacity: 0.6; font-style: italic; }
+
 /* 状态栏有额外统计时仍保持紧凑（F-11 隐藏状态栏时整条移除） */
 .app-statusbar[hidden] {
   display: none;

@@ -417,6 +417,20 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 />
               </Row>
               <Row
+                label={t(SETTINGS_EDITOR.markdownPreview)}
+                hint={t(SETTINGS_EDITOR.markdownPreviewHint)}
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.appearance.markdownPreview}
+                  onChange={(e) =>
+                    update({
+                      appearance: { ...settings.appearance, markdownPreview: e.target.checked },
+                    })
+                  }
+                />
+              </Row>
+              <Row
                 label={t(SETTINGS_EDITOR.defaultEncoding)}
                 hint={t(SETTINGS_EDITOR.defaultEncodingHint)}
               >

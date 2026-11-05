@@ -43,6 +43,8 @@ export const SETTINGS_EDITOR = {
   showLineEndsHint: '有换行的行尾画 ¬',
   showParagraphMarks: '显示换段符',
   showParagraphMarksHint: '段落的最后一行画 ¶（优先于行尾符）',
+  markdownPreview: 'Markdown 实时渲染',
+  markdownPreviewHint: '仅 .md / .markdown 生效；光标所在块显示源码，其余块显示渲染效果',
   defaultEncoding: '默认编码',
   defaultEncodingHint: '打开无 BOM 文件时的探测偏好、另存为的初值',
   defaultLineEnding: '默认行尾',
