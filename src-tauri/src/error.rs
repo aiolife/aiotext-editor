@@ -27,6 +27,7 @@ pub enum AppError {
     Batch(String),
     Settings(String),
     Session(String),
+    LocalHistory(String),
 }
 
 impl std::fmt::Display for AppError {
@@ -51,6 +52,7 @@ impl std::fmt::Display for AppError {
             AppError::Batch(s) => ui_lang::t(&format!("批处理错误：{s}")),
             AppError::Settings(s) => ui_lang::t(&format!("设置错误：{s}")),
             AppError::Session(s) => ui_lang::t(&format!("会话恢复错误：{s}")),
+            AppError::LocalHistory(s) => ui_lang::t(&format!("本地历史错误：{s}")),
         };
         f.write_str(&text)
     }

@@ -3,6 +3,8 @@ pub mod batch;
 pub mod compare;
 pub mod convert;
 pub mod fs;
+/// 本地历史（PRD §3.12）
+pub mod local_history;
 pub mod merge;
 pub mod pipelines;
 pub mod regex;

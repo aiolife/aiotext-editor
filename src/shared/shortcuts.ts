@@ -113,6 +113,8 @@ export const COMMANDS: readonly CommandMeta[] = [
   { id: 'file.saveAll', label: '全部保存', group: '文件', defaultKey: mod('shift+a') },
   { id: 'file.closeAll', label: '全部关闭', group: '文件', defaultKey: mod('shift+w') },
   { id: 'file.closeOthers', label: '关闭其他标签', group: '文件', defaultKey: null },
+  // 本地历史（PRD §3.12）：不绑默认键，只走菜单 / 自定义快捷键
+  { id: 'view.localHistory', label: '本地历史…', group: '视图', defaultKey: null },
 
   // 编辑基础动作（PRD v0.6 §3.5：菜单要能点；键位不动 CodeMirror 自己的那一套）
   // 撤销 / 重做**刻意不绑默认键**：Mod-Z / Mod-Shift-Z 由编辑器快捷键处理，

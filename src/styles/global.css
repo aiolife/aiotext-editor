@@ -2116,6 +2116,43 @@ body,
 }
 
 /* ==========================================================================
+ * 本地历史面板（PRD §3.12）
+ *
+ * 只用半透明叠加与 currentColor，深浅主题自动适配；由 React 渲染，
+ * 不注入 <style>、不写死浅色配色。
+ * ========================================================================== */
+
+.lh-dialog { width: min(900px, 90vw); max-height: 86vh; display: flex; flex-direction: column; }
+.lh-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(128, 128, 128, 0.3); }
+.lh-title { font-size: 1.1em; font-weight: 650; }
+.lh-close, .lh-toolbar button, .lh-item button, .lh-footer button { font: inherit; padding: 2px 9px; border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.lh-close:hover, .lh-toolbar button:hover, .lh-item button:hover, .lh-footer button:hover { background: rgba(128, 128, 128, 0.14); }
+.lh-close:disabled, .lh-toolbar button:disabled, .lh-item button:disabled, .lh-footer button:disabled { opacity: 0.5; cursor: default; }
+.lh-note { padding: 14px 2px; opacity: 0.75; }
+.lh-error { color: #b3261e; }
+.lh-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.lh-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.7; font-size: 0.9em; }
+.lh-list { max-height: 220px; overflow: auto; border-top: 1px solid rgba(128, 128, 128, 0.25); }
+.lh-item { display: flex; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid rgba(128, 128, 128, 0.16); }
+.lh-item-selected { background: rgba(128, 128, 128, 0.12); }
+.lh-time { font-variant-numeric: tabular-nums; opacity: 0.75; white-space: nowrap; font-size: 0.88em; }
+.lh-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lh-badge { font-size: 0.8em; padding: 1px 6px; border-radius: 4px; background: rgba(128, 128, 128, 0.2); white-space: nowrap; }
+.lh-badge-committed { background: rgba(20, 86, 240, 0.16); }
+.lh-pinned { color: rgb(210 153 34); }
+.lh-diff { border-top: 1px solid rgba(128, 128, 128, 0.3); margin-top: 8px; display: flex; flex-direction: column; min-height: 0; }
+.lh-diff-meta { padding: 6px 2px; opacity: 0.8; font-size: 0.9em; }
+.lh-diff-head, .lh-diff-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; }
+.lh-diff-head { padding: 3px 8px; background: rgba(128, 128, 128, 0.16); font-size: 0.85em; }
+.lh-diff-body { max-height: 240px; overflow: auto; }
+.lh-diff-row { border-bottom: 1px solid rgba(128, 128, 128, 0.12); }
+.lh-diff-old, .lh-diff-new { padding: 3px 8px; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 0.85em; }
+.lh-diff-old { background: rgba(214, 60, 60, 0.14); }
+.lh-diff-new { background: rgba(60, 170, 90, 0.14); }
+.lh-footer { justify-content: flex-end; gap: 8px; padding-top: 8px; }
+.lh-confirm { margin-right: auto; color: #b3261e; font-size: 0.9em; }
+
+/* ==========================================================================
  * Markdown 实时渲染（PRD §3.11）
  *
  * 全部是 CodeMirror 的 Decoration class，文档本身仍是纯文本。

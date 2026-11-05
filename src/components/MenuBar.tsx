@@ -466,6 +466,7 @@ export function MenuBar({
       {commandItem('doc.paragraphCount')}
       <div className="menu-sep" />
       {commandItem('view.theme', '切换主题')}
+      {commandItem('view.localHistory')}
       <div className="menu-sep" />
       {commandItem('settings.open')}
       {commandItem('settings.shortcuts')}

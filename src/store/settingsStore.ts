@@ -57,6 +57,16 @@ export const DEFAULT_SETTINGS: Settings = {
     preserveConverted: false,
   },
   compare: { ...DEFAULT_COMPARE_OPTIONS },
+  // 本地历史默认关闭（与后端 LocalHistorySettings::default() 逐字段一致）
+  localHistory: {
+    enabled: false,
+    debounceMs: 30_000,
+    mergeWindowMs: 10_000,
+    retentionDays: 7,
+    maxPerDoc: 20,
+    maxTotalBytes: 50 * 1024 * 1024,
+    largeDocChars: 1_000_000,
+  },
   shortcuts: {},
   // 默认关闭：保持「关闭即退出」，不常驻内存（与后端 `Settings::default()` 一致）
   hideOnClose: false,

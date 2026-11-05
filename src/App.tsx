@@ -22,6 +22,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTabsStore, type EditorTab, type SaveDecision } from './store/tabsStore';
 import { useSettingsStore } from './store/settingsStore';
+import { useLocalHistoryStore } from './store/localHistoryStore';
+import { planClear } from './shared/localHistory';
 import { countOccurrences, countTextStats } from './shared/textStats';
 import { toast } from './store/toastStore';
 import { LanguageProvider, configureI18n, t, type TraditionalMap } from './shared/i18n';
@@ -136,6 +138,9 @@ const MergeDialog = lazy(() =>
 );
 const BatchDialog = lazy(() =>
   import('./components/BatchDialog').then((m) => ({ default: m.BatchDialog })),
+);
+const LocalHistoryDialog = lazy(() =>
+  import('./components/LocalHistoryDialog').then((m) => ({ default: m.LocalHistoryDialog })),
 );
 
 /**
@@ -516,6 +521,101 @@ export default function App() {
     void loadSettings();
   }, [loadSettings]);
 
+  // ---------- F-12 本地历史（PRD §3.12）：设置 → 绑定 → 调度 ----------
+  //
+  // 约束：默认关闭；只对已落盘、有真实路径的文档生效；恢复只回编辑器内存；
+  // 选「不保存」时把快照、索引、目录、路径映射与 emergency 草稿一并清除。
+  //
+  // binding 的三个回调一律按 path 现取 store，不捕获渲染期的 tab 对象：
+  // 切标签那一瞬间的「切走前存档」仍要读到旧文档内容，恢复则要写回当前
+  // 激活标签，不能用早就过期的闭包 id。
+  const localHistorySettings = useSettingsStore((s) => s.settings.localHistory);
+  useEffect(() => {
+    useLocalHistoryStore.getState().setOptions(localHistorySettings);
+  }, [localHistorySettings]);
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
+
+  /** 按「当前激活 + 有路径」重建绑定；无路径 = 不建历史 */
+  const bindActiveHistory = useCallback(() => {
+    const live = useTabsStore.getState();
+    const tab = live.tabs.find((item) => item.id === live.activeTabId) ?? null;
+    if (!tab?.filePath) {
+      useLocalHistoryStore.getState().bind(null);
+      return;
+    }
+    const path = tab.filePath;
+    const byPath = () =>
+      useTabsStore.getState().tabs.find((item) => item.filePath === path) ?? null;
+    useLocalHistoryStore.getState().bind({
+      path,
+      read: () => byPath()?.content ?? '',
+      meta: () => {
+        const current = byPath();
+        return {
+          encoding: current?.encoding ?? 'utf-8',
+          hadBom: current?.hadBom ?? false,
+          lineEnding: current?.lineEnding ?? 'lf',
+        };
+      },
+      write: (content) => {
+        const state = useTabsStore.getState();
+        const current = state.tabs.find((item) => item.id === state.activeTabId);
+        if (!current || current.filePath !== path) {
+          throw new Error('文档已切换，请重新选择快照');
+        }
+        // setContent 标 dirty；Editor 的 tab.content 同步会抑制 onContentChange，
+        // 所以磁盘文件不会被覆盖，恢复只是「编辑器里改成了快照内容」。
+        state.setContent(current.id, content);
+      },
+    });
+  }, []);
+
+  const historyTabId = activeTab?.id ?? null;
+  const historyTabPath = activeTab?.filePath ?? null;
+  useEffect(() => {
+    bindActiveHistory();
+  }, [historyTabId, historyTabPath, bindActiveHistory]);
+
+  /** 保存成功后写「已保存到磁盘」基线；失败时绝不能调（未提交快照正是要保护的） */
+  const afterSaved = useCallback(
+    (tabId: string) => {
+      const state = useTabsStore.getState();
+      const tab = state.tabs.find((item) => item.id === tabId);
+      if (!tab?.filePath || state.activeTabId !== tabId) return;
+      // 另存为会换路径：先重绑，否则基线会记到旧路径（或压根没绑定）上
+      if (useLocalHistoryStore.getState().path !== tab.filePath) bindActiveHistory();
+      void useLocalHistoryStore.getState().markCommitted().catch(() => {});
+    },
+    [bindActiveHistory],
+  );
+
+  /** 编辑触发：只喂当前激活文档，比较模式的对照窗不算 */
+  const handleContentChange = useCallback(
+    (id: string, content: string) => {
+      setContent(id, content);
+      if (id === activeTabIdRef.current) useLocalHistoryStore.getState().markDirty();
+    },
+    [setContent],
+  );
+
+  // 隐藏 / 退出前把待写的那一条冲出去。写盘是异步的，没赶上时还有
+  // localStorage 的 emergency 草稿兜底（flush 会先写它再发 IPC）。
+  useEffect(() => {
+    const flush = () => useLocalHistoryStore.getState().flush();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, []);
+
   // ---------- 界面多语言（PRD §3.6） ----------
 
   const language = useSettingsStore((s) => s.settings.language);
@@ -655,10 +755,11 @@ export default function App() {
       if (!path) return false;
       const check = await precheck(tab.encoding, tab.content);
       if (check.kind === 'cancel') return false;
-      await saveTabAs(tabId, path, check.decision);
-      return true;
+      const saved = await saveTabAs(tabId, path, check.decision);
+      if (saved) afterSaved(tabId);
+      return saved;
     },
-    [precheck, saveTabAs],
+    [precheck, saveTabAs, afterSaved],
   );
 
   const handleOpen = useCallback(
@@ -761,12 +862,15 @@ export default function App() {
       runGuarded(t(ACTION.save), async () => {
         if (!activeTab) return;
         if (activeTab.filePath) {
-          await saveTab(activeTab.id, (unmappable, tab) => askUser(unmappable, tab.encoding));
+          const saved = await saveTab(activeTab.id, (unmappable, tab) =>
+            askUser(unmappable, tab.encoding),
+          );
+          if (saved) afterSaved(activeTab.id);
         } else {
           await doSaveAs(activeTab.id, activeTab.fileName);
         }
       }),
-    [activeTab, askUser, doSaveAs, runGuarded, saveTab],
+    [activeTab, askUser, doSaveAs, runGuarded, saveTab, afterSaved],
   );
 
   const handleSaveAs = useCallback(
@@ -782,11 +886,12 @@ export default function App() {
     async (id: string): Promise<boolean> => {
       const tab = useTabsStore.getState().tabs.find((t) => t.id === id);
       if (!tab) return false;
-      return tab.filePath
-        ? await saveTab(id, (unmappable, t) => askUser(unmappable, t.encoding))
-        : await doSaveAs(id, tab.fileName);
+      if (!tab.filePath) return doSaveAs(id, tab.fileName);
+      const saved = await saveTab(id, (unmappable, t) => askUser(unmappable, t.encoding));
+      if (saved) afterSaved(id);
+      return saved;
     },
-    [askUser, doSaveAs, saveTab],
+    [askUser, doSaveAs, saveTab, afterSaved],
   );
 
   /** 弹出关闭确认对话框并等用户决策（Promise 风格，与 `askUser` 一致） */
@@ -829,6 +934,12 @@ export default function App() {
         if (decision === 'cancel') return;
 
         if (decision === 'discard') {
+          // C-1 ~ C-6：选了「不保存」就彻底清除这批文件的全部快照、索引、
+          // 目录、路径映射与 emergency 草稿；保存 / 取消一律不清。
+          const paths = planClear('discard', dirtyTabs.map((tab) => tab.filePath));
+          if (paths.length > 0) {
+            void useLocalHistoryStore.getState().clearFor(paths).catch(() => {});
+          }
           closable.push(...dirtyTabs.map((t) => t.id));
         } else {
           const savedIds: string[] = [];
@@ -1629,6 +1740,7 @@ export default function App() {
       },
       'compare.restart': { run: restartCompare, enabled: () => compare !== null },
       // 视图
+      'view.localHistory': { run: () => setHistoryOpen(true) },
       'view.theme': {
         run: () => {
           const next = NEXT_THEME[appearance.theme];
@@ -1855,7 +1967,7 @@ export default function App() {
                 readOnly={compare.target !== 'a'}
                 diffMarks={diffMarks.a}
                 pairMark={pairMarks?.a ?? null}
-                onContentChange={setContent}
+                onContentChange={handleContentChange}
                 onCursorChange={setCursor}
                 onSelectionChange={handleSelectionChange}
                 // 查找 / 转换 / 撤销这些只作用于目标窗，别写进只读的那一格
@@ -1879,7 +1991,7 @@ export default function App() {
                 readOnly={compare.target !== 'b'}
                 diffMarks={diffMarks.b}
                 pairMark={pairMarks?.b ?? null}
-                onContentChange={setContent}
+                onContentChange={handleContentChange}
                 onCursorChange={setCursor}
                 onSelectionChange={(id, from, to, external) => {
                   handleSelectionChange(id, from, to, external);
@@ -1897,7 +2009,7 @@ export default function App() {
         ) : activeTab ? (
           <Editor
             tab={activeTab}
-            onContentChange={setContent}
+            onContentChange={handleContentChange}
             onCursorChange={setCursor}
             onSelectionChange={handleSelectionChange}
             onVerticalState={handleVerticalState}
@@ -2038,6 +2150,9 @@ export default function App() {
 
       {/* 第九阶段：帮助与快捷键（顶栏「帮助」/ F1） */}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
+
+      {/* F-12 本地历史：只在用户主动打开时可见，绝不自动复活标签 */}
+      {historyOpen && <LocalHistoryDialog onClose={() => setHistoryOpen(false)} />}
 
       {/* v0.6：编辑 → 跳转…（输入行号 → 编辑器滚动到那一行） */}
       {gotoOpen && activeTab && (

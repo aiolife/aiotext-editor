@@ -45,6 +45,9 @@ export const SETTINGS_EDITOR = {
   showParagraphMarksHint: '段落的最后一行画 ¶（优先于行尾符）',
   markdownPreview: 'Markdown 实时渲染',
   markdownPreviewHint: '仅 .md / .markdown 生效；光标所在块显示源码，其余块显示渲染效果',
+  localHistory: '本地历史（快照 / 对比 / 恢复）',
+  localHistoryHint:
+    '默认关闭；开启后编辑空闲时在本机保留临时快照，可对比或恢复误删内容。只存本机、不联网；选择「不保存」会彻底清除该文件的历史',
   defaultEncoding: '默认编码',
   defaultEncodingHint: '打开无 BOM 文件时的探测偏好、另存为的初值',
   defaultLineEnding: '默认行尾',

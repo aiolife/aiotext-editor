@@ -8,6 +8,8 @@ pub mod data_tables;
 pub mod dragdrop;
 pub mod embedded;
 pub mod encoding;
+/// 本地历史：快照 / diff / 恢复（PRD §3.12）
+pub mod local_history;
 pub mod merge;
 pub mod opencc;
 pub mod paths;

@@ -58,6 +58,9 @@ pub const TAB_WIDTH_MAX: u32 = 16;
 pub const DEFAULT_FONT_FAMILY: &str = "'Source Han Serif SC', 'Songti SC', '宋体', serif";
 /// 设置文件名（`<app_data>/settings.json`）
 pub const SETTINGS_FILE: &str = "settings.json";
+/// 本地历史防抖区间：别让手改的 1ms 把磁盘打爆（PRD §3.12）
+pub const LH_DEBOUNCE_MIN: u32 = 5_000;
+pub const LH_DEBOUNCE_MAX: u32 = 600_000;
 
 // ---------------------------------------------------------------------------
 // 类型（与 F-11 §11.1 的 `Settings` 同形）
@@ -202,6 +205,44 @@ impl Default for ConversionPrefs {
     }
 }
 
+/// 本地历史设置（PRD §3.12）
+///
+/// **默认关闭**：项目设计哲学是「一切写盘需用户明确触发」，用户勾选这个开关
+/// 即视为授权在 `%APPDATA%/AioTextEditor/local-history/` 下定期写快照。
+/// 只存本机、不联网、不写用户文件目录。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LocalHistorySettings {
+    /// 总开关，默认 false
+    pub enabled: bool,
+    /// 空闲多久写一次快照（ms）
+    pub debounce_ms: u32,
+    /// 合并窗口：窗口内连续的 auto 快照复用同一条（ms）
+    pub merge_window_ms: u32,
+    /// 保留天数
+    pub retention_days: u32,
+    /// 每文件最多条数
+    pub max_per_doc: u32,
+    /// 总占用上限（字节）
+    pub max_total_bytes: u64,
+    /// 超过这个字符数的文档只保留手动 / 保存 / 恢复前快照（降频，不跳过）
+    pub large_doc_chars: u32,
+}
+
+impl Default for LocalHistorySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            debounce_ms: 30_000,
+            merge_window_ms: 10_000,
+            retention_days: 7,
+            max_per_doc: 20,
+            max_total_bytes: 50 * 1024 * 1024,
+            large_doc_chars: 1_000_000,
+        }
+    }
+}
+
 /// 全部设置
 ///
 /// `compare` 直接复用 F-06 的 [`CompareOptions`]（比较对话框的入参就是这个类型），
@@ -215,6 +256,8 @@ pub struct Settings {
     pub editor: EditorPrefs,
     pub conversion: ConversionPrefs,
     pub compare: CompareOptions,
+    /// 本地历史（PRD §3.12）
+    pub local_history: LocalHistorySettings,
     /// 快捷键覆盖表（见模块头注释的「三态约定」）
     pub shortcuts: BTreeMap<String, String>,
     /// 关闭主窗口时**隐藏**而不是退出进程。
@@ -275,6 +318,13 @@ pub fn sanitize(mut s: Settings) -> Settings {
         family.to_owned()
     };
     s.editor.tab_width = s.editor.tab_width.clamp(TAB_WIDTH_MIN, TAB_WIDTH_MAX);
+    let h = &mut s.local_history;
+    h.debounce_ms = h.debounce_ms.clamp(LH_DEBOUNCE_MIN, LH_DEBOUNCE_MAX);
+    h.merge_window_ms = h.merge_window_ms.clamp(0, 120_000);
+    h.retention_days = h.retention_days.clamp(1, 90);
+    h.max_per_doc = h.max_per_doc.clamp(5, 200);
+    h.max_total_bytes = h.max_total_bytes.clamp(1024 * 1024, 1024 * 1024 * 1024);
+    h.large_doc_chars = h.large_doc_chars.clamp(10_000, 10_000_000);
     // 未识别的语言值退回简体，而不是让整份设置失效
     if s.language == UiLang::Unknown {
         s.language = UiLang::Zh;
@@ -449,6 +499,7 @@ pub fn load_from(path: &Path) -> Settings {
         editor: recover_section::<EditorPrefs>(incoming.get("editor")),
         conversion: recover_section::<ConversionPrefs>(incoming.get("conversion")),
         compare: recover_section::<CompareOptions>(incoming.get("compare")),
+        local_history: recover_section::<LocalHistorySettings>(incoming.get("localHistory")),
         shortcuts: recover_shortcuts(incoming.get("shortcuts")),
         // 布尔量没有「越界」一说：不是布尔就回落默认（= 关闭，保持既有的退出行为）
         hide_on_close: incoming

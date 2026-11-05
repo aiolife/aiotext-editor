@@ -46,6 +46,8 @@ import {
   SETTINGS_TABS,
 } from './settings';
 import { STATUS } from './status';
+import { LOCAL_HISTORY } from './localHistory';
+import { HISTORY_LABELS } from '../localHistory';
 
 /** 各领域文案表。key 是领域名，value 是「语义 key → 简体原文」 */
 export const MESSAGE_GROUPS = {
@@ -81,6 +83,8 @@ export const MESSAGE_GROUPS = {
   STATS_DOC,
   STATS_WORD,
   STATS_PARA,
+  LOCAL_HISTORY,
+  HISTORY_LABELS,
 } as const;
 
 /** `COMMANDS` 里的命令名与分组名（动态文本，同样参与转换） */

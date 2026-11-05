@@ -2553,3 +2553,70 @@ GitHub Markdown 视觉需另开一轮。
 KaTeX / Mermaid / DOMPurify 及任何大型第三方渲染依赖、块树 / `contenteditable`、
 双引擎与整篇两态切换、代码块语法着色、完整富文本 WYSIWYG、导出 HTML / PDF、
 分栏预览、渲染态 WYSIWYG 排版。
+
+---
+
+## v0.16.0 — 2026-11-06（发布）
+
+新增**本地历史**：带版本快照、diff 与恢复。定位是「开启本地历史，防止误删或改乱；
+临时保存当前未提交改动」，**不是长期版本库**。比较 S1 内存环 / S2 保存点快照 /
+S3 编辑态防抖全文快照 / S4 增量补丁链后采用 **S3**；需求与验收见 PRD §3.12，
+「选不保存就彻底清除该标签历史」的硬口径见 §3.4 决议，分层见
+`03-tech-architecture.md` §10.9。
+
+产物：`AioTextEditor_0.16.0_x64-setup.exe`（4.63 MiB，NSIS）与
+`AioTextEditor_0.16.0_x64_portable.exe`（8.02 MiB，单 exe）。
+
+### 产品口径
+
+- 完全离线、默认关闭；开启即视为授权写本机 app data。只对已落盘、有真实路径的文件生效。
+- 恢复**只回编辑器内存并标 dirty**，磁盘文件不变；恢复前先留 `pre-restore` 存档，
+  因此恢复本身可回退。快照元数据记 `encoding` / `hadBom` / `lineEnding`，恢复后
+  再次保存逐字节一致。
+- 选「不保存 / 全部不保存」→ 连 `.snap`、`index.json`、文档目录、`docs.json` 映射
+  与 emergency 草稿一起清除；「保存」「取消」与直接退出不清。
+- **永不自动复活标签**：历史只在用户主动打开「视图 → 本地历史…」时可见；异常退出
+  留下的草稿也只补记成一条快照，不自动把内容塞回编辑器，不改会话恢复语义。
+
+### 代码实现
+
+| 层 | 文件 | 变更 |
+|------|------|------|
+| Rust 核心 | `src-tauri/src/core/local_history.rs`（新增） | 路径规范化 → `docId` 映射、按文档分目录的索引 + 自包含快照、原子写、坏索引 `.bad` 备份后重建、批量 `clear`、按真实 `.snap` 统计容量 |
+| Rust 命令 | `src-tauri/src/commands/local_history.rs`（新增）、`lib.rs`、`core/mod.rs`、`commands/mod.rs`、`error.rs` | 7 条命令注册，磁盘 IO 走 `spawn_blocking`，新增 `AppError::LocalHistory` |
+| 设置 | `src-tauri/src/core/settings.rs`、`src/platform/tauriApi.ts`、`src/store/settingsStore.ts` | `LocalHistorySettings` 默认值与 `clamp` sanitize；Rust / TS 默认值逐字段一致，`enabled: false` |
+| 决策层 | `src/shared/localHistory.ts`（新增）、`localHistory.test.ts`（新增） | `decideCapture` / `planEviction` / `planClear` / SHA-256 去重；两级淘汰保护；16 项单测 |
+| 服务层 | `src/platform/localHistoryApi.ts`（新增）、`src/store/localHistoryStore.ts`（新增） | 7 个 IPC 包装；模块级串行队列 + 防抖调度器 + emergency 草稿；`restore` / `diffWithCurrent` / `absorbEmergency` |
+| 接线 | `src/App.tsx` | 设置驱动、按路径绑定、编辑触发、保存成功写基线、discard 批量清除、`visibilitychange` / `pagehide` flush、菜单 handler、面板渲染 |
+| UI | `src/components/LocalHistoryDialog.tsx`（新增）、`SettingsDialog.tsx`、`MenuBar.tsx`、`src/shared/shortcuts.ts`、`src/styles/global.css` | 时间线 / 手动快照 / 对比 / 恢复 / 置顶 / 清空；复用 `compare_diff` 的双栏轻量 diff；开关与 `view.localHistory` 命令 |
+| 文案 | `src/shared/i18n/localHistory.ts`（新增）、`settings.ts`、`messages.ts` | 新文案与快照标签表一并纳入批量转繁體 |
+| 契约 | `src-tauri/tests/local_history_contract.rs`（新增） | TS ↔ serde 形状、紧凑 JSON、原子写、路径映射稳定、批量清除 / 清空全部 |
+
+### 验证
+
+- 前端：`vitest` **15 个文件 236 项**全过；`tsc -b`、`eslint .` 0 问题；
+  `npm run build` 通过（`LocalHistoryDialog` 独立 chunk 3.89 kB，未进首屏主包）；
+  版本 bump 到 `0.16.0` 后重跑 `npm test`（含 `packaging.test.ts` 的版本号唯一出处断言）与
+  `eslint .` 仍全绿。
+- Rust：`cargo fmt --check` 干净、**297 项**单测通过、`cargo clippy -- -D warnings` 0 warning。
+- 新测试覆盖：去重 / 合并窗口 / 大文档降频 / 两级淘汰保护 / TTL / `planClear`；
+  Rust 侧覆盖路径规范化、id 防穿越、round trip、坏索引重建、孤儿文件统计与清除契约。
+- **GUI 验收**（v0.16.0 release 便携版真实窗口 + WebView2 CDP，**11 项断言全过**）：
+  - 启动参数打开全新 `.md` 文件；「选项 → 编辑器」里「本地历史」开关可勾选并即时生效；
+  - 「视图 → 本地历史…」面板显示真实文件路径、时间线与「未提交」标记；点「记录快照」
+    后出现一条「手动快照」；
+  - 编辑器插入一段文字后重开面板点「对比」：双栏显示「共 1 处差异」，快照侧为空、
+    当前侧为新增文字（`DiffBlock` 的 UTF-16 偏移切片正确）；
+  - 点「恢复」：编辑器回到快照内容、标签出现「● 未保存」、时间线多出「恢复前存档」、
+    toast 提示「未写入磁盘」，磁盘文件未被覆盖；
+  - 关闭标签选「不保存」后 `history_list` 返回空数组——H-9「彻底清除」在真实窗口里成立。
+  - 验收脚本临时改动的设置已还原（`localHistory.enabled` 仍为 `false`），临时文件与
+    脚本验完即删。
+
+### 不在范围
+
+长期版本库 / 提交历史 / 分支，Git 或网盘同步，自动写回磁盘，自动复活标签，跨设备
+同步 / 云端备份 / 加密存储，富文本或结构化 diff。与独立原型对比后**明确未采用**：
+行级 Myers diff、命令式 DOM 面板、注入式 CSS、后端保存点模型、`view.dispatch`
+直接恢复、默认开启、256KB 硬跳过——它们与本项目「core 纯函数 + 命令层 + 现有
+`compare_diff` + 100 万字目标」的分层冲突。

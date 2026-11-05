@@ -1072,11 +1072,24 @@ export interface ConversionSettings {
  * 因此天然是同一个结构，不会出现两份语义相同的类型（后端同理，见
  * `core/settings.rs` 的说明）。
  */
+/** 本地历史设置（PRD §3.12），默认关闭 */
+export interface LocalHistorySettings {
+  enabled: boolean;
+  debounceMs: number;
+  mergeWindowMs: number;
+  retentionDays: number;
+  maxPerDoc: number;
+  maxTotalBytes: number;
+  largeDocChars: number;
+}
+
 export interface Settings {
   appearance: AppearanceSettings;
   editor: EditorSettings;
   conversion: ConversionSettings;
   compare: CompareOptions;
+  /** 本地历史（PRD §3.12） */
+  localHistory: LocalHistorySettings;
   /**
    * 快捷键**覆盖表**（不是全量快照）：
    * - 键不存在 → 用 `shared/shortcuts.ts` 注册表里的默认键位

@@ -431,6 +431,20 @@ export function SettingsDialog({ onClose, onNotice, initialTab = 'appearance' }:
                 />
               </Row>
               <Row
+                label={t(SETTINGS_EDITOR.localHistory)}
+                hint={t(SETTINGS_EDITOR.localHistoryHint)}
+              >
+                <input
+                  type="checkbox"
+                  checked={settings.localHistory.enabled}
+                  onChange={(e) =>
+                    update({
+                      localHistory: { ...settings.localHistory, enabled: e.target.checked },
+                    })
+                  }
+                />
+              </Row>
+              <Row
                 label={t(SETTINGS_EDITOR.defaultEncoding)}
                 hint={t(SETTINGS_EDITOR.defaultEncodingHint)}
               >

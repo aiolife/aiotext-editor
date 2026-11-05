@@ -477,6 +477,29 @@ npm run tauri:build     # 出包
 
 **单实例必须第一个注册。** `tauri-plugin-single-instance` 要求在所有插件之前 `init`；回调只做「取消最小化 + 显示 + 聚焦」——`argv` / `cwd`（启动参数打开文件）留给后续，不在这里做半成品。
 
+### 10.9 本地历史落地结构（v0.16.0）
+
+| 模块 | 职责 |
+|------|------|
+| `core/local_history.rs` | **纯算法核心（不依赖 Tauri，可直测）**：`docs.json` 存「真实路径 → 安全 docId」映射；每个文档一个目录（`index.json` + 自包含 `<id>.snap`）；`list/read/write/update/remove/clear/total_bytes`；`validate_id` 防路径穿越、`normalize_path` 兜住 `canonicalize` 失败 / Windows `\\?\` / 大小写；原子写（tmp + rename + `sync_all`），坏索引留 `index.json.bad` 后按磁盘 `.snap` 重建 |
+| `commands/local_history.rs` | 7 条命令 `history_list/read/write/update/remove/clear/total_bytes`；磁盘 IO 一律 `spawn_blocking`，错误统一转 `String` |
+| `core/settings.rs` | `LocalHistorySettings`：默认 `enabled: false`、30s 防抖、10s 合并窗口、7 天 TTL、单档 20 条、总 50MB、100 万字降频阈值；`sanitize` 逐项 `clamp`，防手改配置造成疯狂写盘 |
+| `shared/localHistory.ts` | 纯决策层（零 DOM / 零 Tauri）：`decideCapture` / `planEviction` / `planClear` / `contentHash`；TTL 淘汰拆成硬保护（pinned + 最近已保存基线）与软保护（最近 N 条未提交）两级，避免软保护把 7 天保留期架空 |
+| `platform/localHistoryApi.ts` | 7 个 IPC 包装；前端只传真实路径，`docId` 不越界到 WebView |
+| `store/localHistoryStore.ts` | zustand 只持 UI 状态；模块级串行队列 + 防抖调度器 + emergency 草稿；`restore` 先写 `pre-restore` 存档，再回写**编辑器内存**并标 dirty，不碰磁盘 |
+| 契约 | `tests/local_history_contract.rs`：camelCase 形状 / 紧凑 JSON / 原子写无残留 `.tmp` / 路径映射稳定 / 批量清除与清空全部 |
+
+**为什么按文件分目录。** 「选不保存就彻底清除该标签历史」是硬口径（PRD §3.4 决议）。
+按规范化后的真实路径映射出 `docId`，删除时一次摘掉整个目录与 `docs.json` 映射，
+比在扁平索引里逐条过滤更难漏；`history_clear(paths)` 支持批量，空数组表示清空全部。
+
+**为什么全文快照而不是补丁链。** 每条 `.snap` 自包含，坏一条不影响其它，diff / 恢复
+都只需一次读。全文写盘的代价由 30s 防抖 + 10s 合并窗口 + SHA-256 去重 + 单档上限
+约束住；超过 100 万字只降低 auto 频率，不硬跳过。
+
+**diff 不另起炉灶。** 直接复用 `core/text_diff.rs` 的 `compare_diff`（UTF-16 偏移、
+`truncated` / `degraded` 如实上报），面板只按 `DiffBlock` 的 `posA` / `posB` 切两侧原文。
+
 ### 10.2 TextPro 数据（开放文本格式兼容包）
 
 TextPro 的专属 `.dat` 数据文件已全部逆向并转换为开放文本格式（见[数据字典](./06-data-dictionary.md)），随包分发的是转换产物而非原始二进制：
