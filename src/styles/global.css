@@ -2224,7 +2224,13 @@ body,
 }
 
 /* 表格：总宽 100%，各列按整表内容权重分百分比；整行 flex 等高 + 逐格拼出边框 */
-.cm-md-table-head { font-weight: 650; background: rgba(128, 128, 128, 0.10); }
+.cm-md-table-head {
+  font-weight: 650;
+  background: rgba(128, 128, 128, 0.10);
+  /* 行级背景默认画到 border-box，会把 CodeMirror 注入的行首 6px / 行尾 2px padding
+     一起染灰；裁到 content-box 后，浅灰正好从首列左边界铺到末列右边界。 */
+  background-clip: content-box;
+}
 /* 默认 align-items: stretch 让同一行所有单元格等高，折行也不会撕开逐格边框。
    双类选择器避开 CodeMirror 运行时注入的单类 .cm-line 规则。 */
 .cm-line.cm-md-table-head,

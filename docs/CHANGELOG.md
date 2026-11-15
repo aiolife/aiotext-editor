@@ -2637,7 +2637,7 @@ S3 编辑态防抖全文快照 / S4 增量补丁链后采用 **S3**；需求与�
 |------|------|------|
 | 决策层 | `src/shared/markdownSpans.ts` | 整表扫描按最长单元格算显示宽度权重（全角 2 列、4–80 列截断），换算成百分比（窄列保底 6%，总和恰为 100）写入同列每个单元格的 `width`；隐藏表格行内非单元格的分隔符与排版空白 |
 | 装饰层 | `src/components/markdownView.ts` | `MdOp.mark` 支持 `style`，把列宽写成 decoration 属性 |
-| 样式 | `src/styles/global.css` | 表格行 `display:flex` 整行等高；单元格为不伸缩 flex item、`pre-wrap` + `overflow-wrap:anywhere` 在本列内折行；左对齐、逐格拼出横竖同色边框、表头浅灰止于末列 |
+| 样式 | `src/styles/global.css` | 表格行 `display:flex` 整行等高；单元格为不伸缩 flex item、`pre-wrap` + `overflow-wrap:anywhere` 在本列内折行；左对齐、逐格拼出横竖同色边框；表头浅灰 `background-clip: content-box` 只铺到首末列之间 |
 | 契约 | `src/shared/markdownSpans.test.ts` | 同列共享列宽、按最长内容权重分配、百分比总和 100、窄列 6% 保底、隐藏缝隙、首列 / 表头边框标记 |
 | 文档 | `docs/PRD.md` | §3.11 补齐列宽共享、隐藏非单元格字符、整行等高 + 折行口径 |
 
@@ -2658,9 +2658,25 @@ S3 编辑态防抖全文快照 / S4 增量补丁链后采用 **S3**；需求与�
 - Rust：`cargo fmt --check` 干净、`cargo test` 全过、`cargo clippy -- -D warnings` 0 warning。
 - **GUI 验收**（v0.16.1 release 便携版真实窗口 + WebView2 CDP）：`app_version` 返回
   `0.16.1`、标题 Live Preview 生效；100 行 × 10 列长短不一的表格实测各列 x 起点偏移全 0、
-  同行单元格高度差 0px、相邻行竖线垂直缺口 0px、横向溢出单元格 0 个、表头背景超出末列
-  2.08px（亚像素）、横竖边框同色；关闭全局自动换行后仍折行且无溢出。截图目视确认无重叠、
-  边框连续、表头浅灰止于末列。临时 CDP 脚本与截图验完即删。
+  同行单元格高度差 0px、相邻行竖线垂直缺口 0px、横向溢出单元格 0 个、横竖边框同色；
+  关闭全局自动换行后仍折行且无溢出。表头浅灰绘制右边界与末列只差 0.06px、左边界与首列
+  差 0px（见下「发布后修订」）。截图目视确认无重叠、边框连续、浅灰左右贴合列边界。
+  临时 CDP 脚本与截图验完即删。
+
+### 发布后修订（同版本重打包）
+
+首次发布后真窗口探针发现，表头浅灰仍会把行级 padding 一起染灰：CodeMirror 注入的
+`.cm-line { padding: 0 2px 0 6px }` 让背景右边界超出末列 2.08px（= `padding-right` 2px
++ 亚像素舍入），左边界也多出 6px。列宽本身已铺满 content box，不是错列。
+
+给 `.cm-md-table-head` 加 `background-clip: content-box`，把浅灰裁到 content box：背景绘制
+右边界 − 末列右边界 = 0.06px、左边界 − 首列左边界 = 0px；列宽、总宽、padding、边框与
+flex 布局均未改动。重建产物后真窗口复验表格其余判据仍全 0，截图目视确认左右都贴合列边界。
+注意 `getBoundingClientRect().right − 末列右边界` 仍为约 2.06px，那量的是元素边框盒（含
+`padding-right`），不是背景绘制区。
+
+v0.16.1 以**追加提交**方式纳入本修订并重新打包，tag `v0.16.1` 更新指向修订后的提交；
+版本号与产物文件名不变。
 
 ### 已知表现
 
