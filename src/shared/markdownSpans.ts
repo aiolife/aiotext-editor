@@ -60,7 +60,7 @@ export interface MdWidgetSpec {
  */
 export type MdOp =
   | { type: 'line'; at: number; cls: string }
-  | { type: 'mark'; from: number; to: number; cls: string; title?: string }
+  | { type: 'mark'; from: number; to: number; cls: string; title?: string; style?: string }
   | { type: 'hide'; from: number; to: number }
   | { type: 'widget'; from: number; to: number; widget: MdWidgetSpec };
 
@@ -161,6 +161,120 @@ function scanCustom(text: string, tree: Tree): CustomSpan[] {
   return spans;
 }
 
+// ---- 表格列宽：整表扫描后按权重分配百分比（PRD §3.11） ----
+//
+// 每个 TableCell 是独立的 inline-block，而 CodeMirror 的每一行都是独立 DOM，
+// 无法用 CSS table 跨行共享列宽，只能由决策层把列宽写到每个单元格上。
+
+/** 列宽权重下限 / 上限（显示列）：只用来算百分比，不再直接产出 px / em */
+const TABLE_COL_MIN_W = 4;
+const TABLE_COL_MAX_W = 80;
+/** 任何一列至少占 6%，避免短列被压成一条线 */
+const TABLE_COL_MIN_PERCENT = 6;
+
+/** 东亚宽字符按 2 列计，其余 1 列 */
+const WIDE_CHAR =
+  /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE10-\uFE19\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+
+/** 去掉行内标记符后按显示列数计宽 */
+function cellDisplayWidth(source: string): number {
+  const plain = source.trim().replace(/[*_~=`]/g, '');
+  let width = 0;
+  for (const ch of plain) width += WIDE_CHAR.test(ch) ? 2 : 1;
+  return width;
+}
+
+interface TableCellLayout {
+  /** 该列占整行宽度的百分比，各列之和恰为 100 */
+  percent: number;
+  first: boolean;
+  head: boolean;
+}
+
+interface TableLayout {
+  cells: Map<number, TableCellLayout>;
+  /** 表格行内不属于任何单元格的字符（分隔符与排版空白），隐藏后列宽才铺满整行 */
+  gaps: { from: number; to: number }[];
+}
+
+/** 从任意表格行向上/下扩展出整张表的源码边界（口径与 isMarkdownLine 一致） */
+function tableBounds(doc: Text, at: number): [number, number] {
+  const isRow = (n: number): boolean => /^\s*\|.*\|\s*$/.test(doc.line(n).text);
+  let start = doc.lineAt(at).number;
+  let end = start;
+  while (start > 1 && isRow(start - 1)) start -= 1;
+  while (end < doc.lines && isRow(end + 1)) end += 1;
+  return [doc.line(start).from, doc.line(end).to];
+}
+
+/** 扫描整表：按最长单元格算列权重 → 百分比，并记下需要隐藏的非单元格字符 */
+function layoutTable(
+  tree: Tree,
+  doc: Text,
+  text: string,
+  [from, to]: [number, number],
+): TableLayout {
+  const widths: number[] = [];
+  const cells: { at: number; col: number; head: boolean; from: number; to: number }[] = [];
+  const headLine = doc.lineAt(from).from;
+  let lastLine = -1;
+  let col = 0;
+
+  tree.iterate({
+    from,
+    to,
+    enter: (node) => {
+      if (node.name !== 'TableCell' || node.from < from || node.to > to) return;
+      const line = doc.lineAt(node.from).from;
+      if (line !== lastLine) {
+        lastLine = line;
+        col = 0;
+      }
+      cells.push({ at: node.from, col, head: line === headLine, from: node.from, to: node.to });
+      widths[col] = Math.max(widths[col] ?? 0, cellDisplayWidth(text.slice(node.from, node.to)));
+      col += 1;
+    },
+  });
+
+  // 每列最长内容 → 权重 → 百分比；下限保证短列不被压没，最后归一化到 100
+  const weights = widths.map((w) =>
+    Math.min(TABLE_COL_MAX_W, Math.max(TABLE_COL_MIN_W, Math.ceil(w))),
+  );
+  const weightTotal = weights.reduce((a, b) => a + b, 0) || 1;
+  const raw = weights.map((w) => (w / weightTotal) * 100);
+  const isSmall = raw.map((p) => p < TABLE_COL_MIN_PERCENT);
+  const smallCount = isSmall.filter(Boolean).length;
+  let percents: number[];
+  if (smallCount === weights.length) {
+    percents = weights.map(() => 100 / weights.length);
+  } else {
+    // 先给窄列保底 6%，剩余额度再按权重分给其它列，保证总和精确为 100
+    const bigWeight = weights.reduce((s, w, i) => (isSmall[i] ? s : s + w), 0);
+    const bigRoom = 100 - smallCount * TABLE_COL_MIN_PERCENT;
+    percents = weights.map((w, i) =>
+      isSmall[i] ? TABLE_COL_MIN_PERCENT : (w / bigWeight) * bigRoom,
+    );
+  }
+
+  // 非单元格字符（分隔符与排版空白）会在列间留缝；列宽之和 100% 再加这些缝
+  // 会把末列挤到下一行，隐藏后单元格才真正铺满整行。
+  const gaps: { from: number; to: number }[] = [];
+  for (let p = from; p < to; p += 1) {
+    if (text[p] === '\n' || cells.some((c) => p >= c.from && p < c.to)) continue;
+    gaps.push({ from: p, to: p + 1 });
+  }
+
+  const result = new Map<number, TableCellLayout>();
+  for (const c of cells) {
+    result.set(c.at, {
+      percent: percents[c.col],
+      first: c.col === 0,
+      head: c.head,
+    });
+  }
+  return { cells: result, gaps };
+}
+
 /**
  * 规划一段可视区域的 Markdown 装饰。
  *
@@ -177,6 +291,9 @@ export function planMarkdown(
   cursor: number,
 ): MdPlan {
   const text = doc.toString();
+  // 一张表会被可见范围内的每个单元格反复引用：每次 plan 只扫一遍整表
+  const tableCache = new Map<number, TableLayout>();
+  const boundsCache = new Map<number, [number, number]>();
   const ops: MdOp[] = [];
   const seenLines = new Set<number>();
   const renderedLines: [number, number][] = [];
@@ -255,7 +372,27 @@ export function planMarkdown(
         pushLine(n.from, name === 'TableHeader' ? 'cm-md-table-head' : 'cm-md-table-row');
       }
       if (name === 'TableCell') {
-        ops.push({ type: 'mark', from: n.from, to: n.to, cls: 'cm-md-cell' });
+        const lineStart = doc.lineAt(n.from).from;
+        let bounds = boundsCache.get(lineStart);
+        if (!bounds) {
+          bounds = tableBounds(doc, n.from);
+          boundsCache.set(lineStart, bounds);
+        }
+        let layout = tableCache.get(bounds[0]);
+        if (!layout) {
+          layout = layoutTable(tree, doc, text, bounds);
+          tableCache.set(bounds[0], layout);
+          // 隐藏行内非单元格字符，避免它们成为可见的 flex item 占位
+          for (const p of layout.gaps) ops.push({ type: 'hide', from: p.from, to: p.to });
+        }
+        const cell = layout.cells.get(n.from);
+        const cls = cell
+          ? `cm-md-cell${cell.first ? ' cm-md-cell-first' : ''}${cell.head ? ' cm-md-cell-head' : ''}`
+          : 'cm-md-cell';
+        // 表格总宽 100%，各列按内容权重分百分比；padding/border 由全局 border-box
+        // 吃掉，不再额外加宽，同列在不同行宽度严格一致。
+        const width = cell ? `width:${cell.percent.toFixed(3)}%` : undefined;
+        ops.push({ type: 'mark', from: n.from, to: n.to, cls, ...(width ? { style: width } : {}) });
       }
       if (name === 'TableDelimiter') {
         if (n.to - n.from > 1) {

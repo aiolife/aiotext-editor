@@ -21,6 +21,13 @@ function plan(text: string, cursor = -1) {
 const ofType = (ops: MdOp[], type: MdOp['type']): MdOp[] =>
   ops.filter((o) => o.type === type);
 
+/** 表格用例都要从装饰里挑出单元格 mark */
+const tableCells = (ops: MdOp[]): Extract<MdOp, { type: 'mark' }>[] =>
+  ofType(ops, 'mark').filter(
+    (o): o is Extract<MdOp, { type: 'mark' }> =>
+      o.type === 'mark' && o.cls.split(' ').includes('cm-md-cell'),
+  );
+
 describe('planMarkdown', () => {
   it('标题：整行样式 + 隐藏 # 和紧跟的空格', () => {
     const { ops } = plan('## 二级');
@@ -162,6 +169,47 @@ describe('planMarkdown', () => {
     const { renderedLines } = plan('## 标题\n\n普通行\n\n> 引用');
     expect(renderedLines.length).toBeGreaterThanOrEqual(2);
     for (const [a, b] of renderedLines) expect(b).toBeGreaterThanOrEqual(a);
+  });
+
+  it('表格：同列共享列宽，取该列最长单元格，表头与首列带边框标记', () => {
+    const text = [
+      '| 短 | 说明 | 编号 |',
+      '| --- | --- | --- |',
+      '| 甲乙丙丁戊己庚辛 | 短 | 1 |',
+      '| A | 这是一段很长的说明文字 | 2 |',
+    ].join('\n');
+    const { ops } = plan(text);
+    const cells = tableCells(ops);
+    expect(cells).toHaveLength(9); // 表头 + 2 数据行 × 3 列
+    const byColumn: string[][] = [[], [], []];
+    cells.forEach((c, i) => byColumn[i % 3].push(c.style ?? ''));
+    for (const styles of byColumn) expect(new Set(styles).size).toBe(1);
+
+    // 权重 16 : 22 : 4 → 38.095% : 52.381% : 9.524%，三列之和为 100%
+    expect(byColumn[0][0]).toContain('width:38.095%');
+    expect(byColumn[1][0]).toContain('width:52.381%');
+    expect(byColumn[2][0]).toContain('width:9.524%');
+    const pcts = byColumn.map((styles) =>
+      Number.parseFloat(styles[0].match(/width:([\d.]+)%/)![1]),
+    );
+    expect(pcts.reduce((a, b) => a + b, 0)).toBeCloseTo(100, 2);
+    // 源码里的 `|` 必须隐藏，列宽百分比之和才正好铺满整行（表头底色不越界）
+    expect(ops.filter((o) => o.type === 'hide' && o.to - o.from === 1).length).toBeGreaterThan(0);
+    expect(cells[0].cls).toContain('cm-md-cell-first');
+    expect(cells[0].cls).toContain('cm-md-cell-head');
+    expect(cells[1].cls).not.toContain('cm-md-cell-first');
+  });
+
+  it('表格：窄列保底 6%，超长列不独吞整行，总和仍为 100%', () => {
+    const text = `| 短 | 长 |\n| --- | --- |\n| A | ${'很长'.repeat(60)} |`;
+    const { ops } = plan(text);
+    const cells = tableCells(ops);
+    expect(cells).toHaveLength(4); // 表头 + 1 数据行 × 2 列
+    const p1 = Number.parseFloat((cells[0].style ?? '').match(/width:([\d.]+)%/)![1]);
+    const p2 = Number.parseFloat((cells[1].style ?? '').match(/width:([\d.]+)%/)![1]);
+    expect(p1).toBeCloseTo(6, 2);
+    expect(p2).toBeCloseTo(94, 2);
+    expect(p1 + p2).toBeCloseTo(100, 2);
   });
 });
 

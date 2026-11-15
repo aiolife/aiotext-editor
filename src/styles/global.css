@@ -2223,9 +2223,31 @@ body,
   border-top: 1px solid rgba(128, 128, 128, 0.3);
 }
 
-/* 表格：单元格留白参考 MarkText 的 6px 13px；分隔行压成一条线 */
+/* 表格：总宽 100%，各列按整表内容权重分百分比；整行 flex 等高 + 逐格拼出边框 */
 .cm-md-table-head { font-weight: 650; background: rgba(128, 128, 128, 0.10); }
-.cm-md-cell { display: inline-block; min-width: 6ch; padding: 0 0.8em; }
+/* 默认 align-items: stretch 让同一行所有单元格等高，折行也不会撕开逐格边框。
+   双类选择器避开 CodeMirror 运行时注入的单类 .cm-line 规则。 */
+.cm-line.cm-md-table-head,
+.cm-line.cm-md-table-row {
+  display: flex;
+}
+.cm-md-cell {
+  /* flex item：宽度由决策层的 width:N% 决定；不伸缩，也不被 min-content 撑宽 */
+  flex: 0 0 auto;
+  min-width: 0;
+  /* 全局 border-box 把 padding/border 吃进这份宽度，保持 0.8em / 1px 不变，
+     同列才严格等宽 */
+  padding: 0 0.8em;
+  /* 内容在本列内折行，不再横向溢出压住相邻列；与全局「自动换行」开关无关 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  /* 横竖同色，行交界处才不会出现淡色断点 */
+  border-right: 1px solid rgba(128, 128, 128, 0.4);
+  border-bottom: 1px solid rgba(128, 128, 128, 0.4);
+}
+.cm-md-cell-first { border-left: 1px solid rgba(128, 128, 128, 0.4); }
+.cm-md-cell-head { border-top: 1px solid rgba(128, 128, 128, 0.4); }
 .cm-md-table-sep {
   height: 1px;
   line-height: 0;

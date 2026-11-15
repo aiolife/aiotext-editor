@@ -138,11 +138,15 @@ function opToRange(op: MdOp): Range<Decoration> {
   switch (op.type) {
     case 'line':
       return Decoration.line({ class: op.cls }).range(op.at);
-    case 'mark':
+    case 'mark': {
+      const attributes: Record<string, string> = {};
+      if (op.title) attributes.title = op.title;
+      if (op.style) attributes.style = op.style;
       return Decoration.mark({
         class: op.cls,
-        ...(op.title ? { attributes: { title: op.title } } : {}),
+        ...(Object.keys(attributes).length ? { attributes } : {}),
       }).range(op.from, op.to);
+    }
     case 'hide':
       return Decoration.replace({}).range(op.from, op.to);
     case 'widget':
